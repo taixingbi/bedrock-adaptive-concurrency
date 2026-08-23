@@ -1,0 +1,14 @@
+name: e6_ablation
+experiment: E6
+mode: open_loop
+rps_frac: 0.9
+warmup_s: 0
+measure_s: 480
+repetitions: 3
+workload:
+  prompt_class: short
+phases:
+  - {until_s: 180, rps_frac: 0.9, prompt_class: short}
+  - {until_s: 300, rps_frac: 0.9, prompt_class: long}
+  - {until_s: 480, rps_frac: 0.9, prompt_class: short}
+# cells: full / minus token / minus TTFT / minus 429 / minus multiplicative decrease

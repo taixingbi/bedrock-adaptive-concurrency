@@ -1,0 +1,18 @@
+name: e4_token_shift
+experiment: E4
+mode: open_loop
+rps_frac: 0.9
+# Constant RPS. Long phase (4608 tok) typically exceeds 600k TPM even when
+# short (640 tok) is under 800 RPM. Controller must react to W_t, not quota %.
+warmup_s: 0
+measure_s: 480
+repetitions: 3
+workload:
+  prompt_class: short
+policies:
+  - slo_aimd
+  - token_slo_aimd
+phases:
+  - {until_s: 180, rps_frac: 0.9, prompt_class: short}
+  - {until_s: 300, rps_frac: 0.9, prompt_class: long}
+  - {until_s: 480, rps_frac: 0.9, prompt_class: short}

@@ -1,0 +1,13 @@
+name: dryrun
+experiment: E1
+mode: closed_loop
+policy: fixed
+mock: true
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 8
+concurrency: [1, 2]
+warmup_s: 0
+measure_s: 2
+repetitions: 1

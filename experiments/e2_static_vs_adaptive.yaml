@@ -1,0 +1,16 @@
+name: e2_static_vs_adaptive
+experiment: E2
+mode: open_loop
+# 0.9 × R_knee is too tight when C_knee=1: open-loop queue wait dominates TTFT.
+rps_frac: 0.5
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+warmup_s: 60
+measure_s: 180
+repetitions: 5
+queue_max: 16
+queue_timeout_s: 2.0
+# cells are derived from --c-knee: Fixed-Low / Knee / High, Retry/Backoff, Gradient, SLO-AIMD
+# When C_knee=1, Fixed-Low is dropped (same as Knee). Fixed-High is C=2.

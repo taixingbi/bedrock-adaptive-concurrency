@@ -1,0 +1,16 @@
+name: e3_dynamic_load
+experiment: E3
+mode: open_loop
+warmup_s: 0
+measure_s: 420
+repetitions: 3
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+policies: [fixed, gradient, slo_aimd]
+phases:
+  - {until_s: 120, rps_frac: 0.5, prompt_class: short}
+  - {until_s: 240, rps_frac: 0.9, prompt_class: short}
+  - {until_s: 300, rps_frac: 1.5, prompt_class: short}
+  - {until_s: 420, rps_frac: 0.6, prompt_class: short}

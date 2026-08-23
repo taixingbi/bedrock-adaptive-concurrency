@@ -1,0 +1,15 @@
+name: e1_sweep
+experiment: E1
+mode: closed_loop
+policy: fixed
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+  temperature: 0
+  streaming: true
+concurrency: [1, 2, 4, 8, 16, 32, 64]
+warmup_s: 60
+measure_s: 180
+repetitions: 5
+extend_if_unsaturated: true

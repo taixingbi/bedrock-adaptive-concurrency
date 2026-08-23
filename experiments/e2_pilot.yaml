@@ -1,0 +1,18 @@
+name: e2_pilot
+experiment: E2
+mode: open_loop
+rps_frac: 0.5
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+warmup_s: 15
+measure_s: 45
+repetitions: 1
+queue_max: 16
+queue_timeout_s: 2.0
+cells:
+  - {name: fixed_knee, policy: fixed, c: 1}
+  - {name: fixed_high, policy: fixed, c: 2}
+  - {name: slo_aimd, policy: slo_aimd, c: 1}
+# Use --c-knee 1 --r-knee 1.84 --slo-ms 576

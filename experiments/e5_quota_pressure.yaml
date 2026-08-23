@@ -1,0 +1,15 @@
+name: e5_quota_pressure
+experiment: E5
+mode: open_loop
+capacity_ref: quota
+# 1.0x = short-workload quota envelope: min(800 RPM, 600k TPM) = 13.33 RPS (RPM binds)
+warmup_s: 60
+measure_s: 180
+repetitions: 3
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+policies: [slo_aimd, retry_backoff]
+load_frac: [0.5, 0.75, 0.9, 1.0, 1.1, 1.25]
+# Intentionally approaches Bedrock RPM/TPM. Do not mix with E1–E4.

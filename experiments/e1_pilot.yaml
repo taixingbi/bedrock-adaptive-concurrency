@@ -1,0 +1,15 @@
+name: e1_pilot
+experiment: E1
+mode: closed_loop
+policy: fixed
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+  temperature: 0
+  streaming: true
+concurrency: [1, 2, 4, 8]
+warmup_s: 30
+measure_s: 60
+repetitions: 1
+# Cheap knee scout. Stop if 429s appear — that is the RPM cliff, not C_knee.

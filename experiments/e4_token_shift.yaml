@@ -1,12 +1,13 @@
-name: e4_token_shift
+name: e4_token_shift_v2
 experiment: E4
 mode: open_loop
 rps_frac: 0.9
-# Constant RPS. Long phase (4608 tok) typically exceeds 600k TPM even when
-# short (640 tok) is under 800 RPM. Controller must react to W_t, not quota %.
+# Constant RPS. Decide if token-aware stays a core novelty (>~10% + better recovery).
 warmup_s: 0
 measure_s: 480
-repetitions: 3
+repetitions: 5
+queue_max: 16
+queue_timeout_s: 2.0
 workload:
   prompt_class: short
 policies:

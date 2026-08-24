@@ -50,7 +50,7 @@ Real Maverick on `short` (512/128) should look like: 1–2 OK requests in 1s, TT
 
 `scripts/run_experiment.py` starts and stops its own gateway. Stop any uvicorn on the same port first.
 
-Order: smoke → **E1 pilot** → full E1 → E2 / E3 → **E4** → E6 → E5 last.
+Rerun lock: controller demand-gate → **E2 light-load** → **E3** (main) → **E4** → decide token-aware → E6 last. **E5 paused.** First-round traces stay under the old result names.
 
 ```bash
 # cheap knee scout: C=1,2,4,8; 30s warmup + 60s measure; 1 rep
@@ -67,14 +67,14 @@ After the pilot, pass `--c-knee`, `--r-knee`, and `--slo-ms` (use \(1.5 \times\)
 When \(C_{knee}=1\), open-loop at \(0.9 R_{knee}\) (1.66 rps) plus an unbounded wait queue is unstable: user-facing TTFT includes queue wait and climbs without bound. E2 now offers \(0.5 R_{knee}\) (~0.92 rps) and waiters time out after 2s (`queue_timeout`). Discard any E2 numbers from the killed `fixed_low` run.
 
 ```bash
-# short check first (~3 min): C=1 vs C=2 vs slo_aimd
-python scripts/run_experiment.py experiments/e2_pilot.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
-
+# E2 light-load sanity → results/e2_light_load (C must stay 1–2)
 python scripts/run_experiment.py experiments/e2_static_vs_adaptive.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+
+# E3 main rerun → results/e3_dynamic_load_v2
 python scripts/run_experiment.py experiments/e3_dynamic_load.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+
+# E4 token-shift decision → results/e4_token_shift_v2
 python scripts/run_experiment.py experiments/e4_token_shift.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
-python scripts/run_experiment.py experiments/e6_ablation.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
-python scripts/run_experiment.py experiments/e5_quota_pressure.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 ```
 
 Optional PNGs: add `--plot`. Local harness check: `python scripts/run_experiment.py experiments/dryrun.yaml --mock --reps 1 --port 8080`.

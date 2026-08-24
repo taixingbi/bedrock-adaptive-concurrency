@@ -45,7 +45,7 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
     window = ObservationWindow()
     metrics = GatewayMetrics()
     metrics.set_quotas(settings.bedrock_rpm_quota, settings.bedrock_tpm_quota, settings.bedrock_tpd_quota)
-    metrics.set_runtime(inflight=0, c=settings.concurrency_limit)
+    metrics.set_runtime(inflight=0, c=settings.concurrency_limit, waiting=0)
 
     run_dir = Path(settings.results_path) / settings.run_id
     events = JsonlWriter(run_dir / "events.jsonl")
@@ -75,6 +75,9 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
             "policy": controller.name,
             "c": limiter.limit,
             "inflight": limiter.inflight,
+            "actual_inflight": limiter.inflight,
+            "utilization": limiter.inflight / max(limiter.limit, 1),
+            "queue_depth": limiter.waiting,
             "waiting": limiter.waiting,
             "w_t": limiter.w_t,
             "ttft_slo_ms": settings.ttft_slo_ms,
@@ -135,6 +138,7 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
         )
         await window.observe(
             ttft_ms=None,
+            backend_ttft_ms=None,
             queue_ms=0.0,
             throttle=False,
             error=False,
@@ -148,7 +152,7 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
 
     admit_ts = time.time()
     queue_ms = (admit_ts - arrival_ts) * 1000
-    metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit)
+    metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit, waiting=limiter.waiting)
     try:
         result = await _invoke(app, payload, inp, out, temperature, admit_ts)
         retries = 0
@@ -164,7 +168,7 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
             result.retries = retries
     finally:
         await limiter.release(weight)
-        metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit)
+        metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit, waiting=limiter.waiting)
 
     user_ttft_ms = None if result.first_token_ts is None else (result.first_token_ts - arrival_ts) * 1000
     user_e2e_ms = (result.finish_ts - arrival_ts) * 1000
@@ -187,6 +191,7 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
         app.state.totals["slo"] += 1
     await window.observe(
         ttft_ms=user_ttft_ms,
+        backend_ttft_ms=result.ttft_ms,
         queue_ms=queue_ms,
         throttle=result.bedrock_429,
         error=result.bedrock_5xx,
@@ -311,12 +316,16 @@ async def _controller_loop(app: FastAPI) -> None:
             await limiter.set_limit(decision.c)
         app.state.last_snapshot = snap
         logger.info(
-            "controller policy=%s action=%s c=%s inflight=%s w_t=%.1f ttft_p95=%s",
+            "controller policy=%s action=%s c=%s inflight=%s util=%.2f queue_depth=%s w_t=%.1f "
+            "backend_ttft_p95=%s ttft_p95=%s",
             controller.name,
             decision.action,
             decision.c,
             snap.inflight,
+            snap.utilization,
+            snap.queue_depth,
             snap.w_t,
+            snap.backend_ttft_p95_ms,
             snap.ttft_p95_ms,
         )
 
@@ -325,6 +334,7 @@ async def _timeseries_loop(app: FastAPI) -> None:
     settings: Settings = app.state.settings
     limiter: ConcurrencyLimiter = app.state.limiter
     metrics: GatewayMetrics = app.state.metrics
+    window: ObservationWindow = app.state.window
     last = time.time()
     last_offered = 0
     last_achieved = 0
@@ -344,7 +354,8 @@ async def _timeseries_loop(app: FastAPI) -> None:
         last_offered, last_achieved, last_slo = totals["offered"], totals["achieved"], totals["slo"]
         last_in, last_out = totals["input"], totals["output"]
         last = now
-        metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit)
+        await window.sample_load(limiter.inflight, limiter.waiting)
+        metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit, waiting=limiter.waiting)
         metrics.set_rates(
             offered_rps=offered_rps,
             achieved_rps=achieved_rps,
@@ -358,6 +369,9 @@ async def _timeseries_loop(app: FastAPI) -> None:
                 "ts": now,
                 "c": limiter.limit,
                 "inflight": limiter.inflight,
+                "actual_inflight": limiter.inflight,
+                "utilization": limiter.inflight / max(limiter.limit, 1),
+                "queue_depth": limiter.waiting,
                 "waiting": limiter.waiting,
                 "w_t": limiter.w_t,
                 "offered_rps": offered_rps,
@@ -366,6 +380,7 @@ async def _timeseries_loop(app: FastAPI) -> None:
                 "input_tokens_per_sec": in_tps,
                 "output_tokens_per_sec": out_tps,
                 "ttft_p95_ms": None if snap is None else snap.ttft_p95_ms,
+                "backend_ttft_p95_ms": None if snap is None else snap.backend_ttft_p95_ms,
                 "queue_p95_ms": None if snap is None else snap.queue_p95_ms,
                 "throttle_n": 0 if snap is None else snap.throttle_n,
                 "last_action": app.state.controller.last_action,

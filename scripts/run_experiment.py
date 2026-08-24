@@ -114,6 +114,7 @@ def cell_env(spec: dict[str, Any], cell: dict[str, Any], run_id: str, args: argp
         "USE_TTFT_SIGNAL": str(merged.get("use_ttft_signal", True)).lower(),
         "USE_THROTTLE_SIGNAL": str(merged.get("use_throttle_signal", True)).lower(),
         "USE_MULTIPLICATIVE_DECREASE": str(merged.get("use_multiplicative_decrease", True)).lower(),
+        "USE_DEMAND_GATE": str(merged.get("use_demand_gate", spec.get("use_demand_gate", True))).lower(),
         "BEDROCK_RPM_QUOTA": str(merged.get("bedrock_rpm_quota", BEDROCK_RPM_QUOTA)),
         "BEDROCK_TPM_QUOTA": str(merged.get("bedrock_tpm_quota", BEDROCK_TPM_QUOTA)),
         "BEDROCK_TPD_QUOTA": str(merged.get("bedrock_tpd_quota", BEDROCK_TPD_QUOTA)),

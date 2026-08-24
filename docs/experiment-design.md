@@ -92,29 +92,34 @@ Prove adaptive concurrency is necessary.
 - Record: throughput, SLO-goodput, TTFT P50/P95/P99, E2E P95/P99, 429, 5xx, token throughput.
 - Output: \(C_{knee}\), \(R_{knee}\), SLO. **E1 before E2–E6.**
 
-## E2 — Static vs adaptive (main comparison)
+## E2 — Light-load sanity (rerun)
 
-Same open-loop offered rate \(0.9 R_{knee}\) (stay off E5):
+Offered \(0.5 R_{knee}\). Not a ranking. Confirm revised SLO-AIMD does not drift \(C\) under unused headroom.
 
-| Policy | Behavior |
+| Policy | Role |
 |---|---|
-| Fixed-Low | Conservative static \(C\) |
-| Fixed-Knee | Best static \(C\) from E1 |
-| Fixed-High | Aggressive static \(C\) |
-| Retry/Backoff | High \(C\) + exponential backoff on 429/5xx; \(C\) does not adapt |
-| Generic Gradient | Adapt \(C\) from TTFT-P95 gradient, not an absolute SLO |
-| SLO-AIMD | Paper controller |
+| Fixed-1 | Knee static \(C\) |
+| Fixed-2 | One step above knee |
+| Revised SLO-AIMD | Must stay at \(C \in \{1,2\}\) |
 
-SLO-AIMD, every 5 seconds:
+5 reps. Pass if goodput/TTFT match Fixed-1, Bedrock 429 = 0, adaptive \(C\) does not climb.
+
+SLO-AIMD, every 5 seconds (revised):
 
 ```
-if TTFT P95 < SLO and throttle/error rate low:
-    C = C + 1
-if TTFT P95 > SLO or throttling occurs:
+if backend TTFT P95 > SLO or Bedrock 429 / error:
     C = 0.7 × C
+elif backend TTFT P95 < SLO and throttle/error rate low and demand_pressure:
+    C = C + 1
+else:
+    hold
 ```
 
-Prefer decrease when both could apply.
+Control uses **backend** TTFT (admit → first token). User-facing TTFT (arrival → first token, includes queue) remains the goodput SLO and must not drive decrease: queue wait is demand, not Bedrock saturation.
+
+`demand_pressure` is true only when the current \(C\) is actually pressed: waiters exist in the window, or queue-wait P95 \(\ge 5\) ms. Vacant \(C\) (healthy backend TTFT, no queue) must not increment.
+
+Prefer decrease when both backend pressure and demand could apply.
 
 **Primary metric:**
 
@@ -122,7 +127,9 @@ Prefer decrease when both could apply.
 \mathrm{Goodput} = \frac{\#\{\text{successful requests meeting SLO}\}}{\text{time}}
 \]
 
-## E3 — Dynamic load / burst
+## E3 — Dynamic load / burst (main rerun)
+
+Policies: Fixed-1, Generic Gradient, Revised SLO-AIMD. 5 reps.
 
 Open-loop RPS, `short` workload:
 
@@ -137,7 +144,9 @@ Time series: offered/achieved RPS, \(C(t)\), in-flight, TTFT P95, latency P95, g
 
 Derived: adaptation time, recovery time, SLO-violation duration, overshoot, goodput.
 
-## E4 — Token-demand shift (novelty)
+## E4 — Token-demand shift (novelty decision)
+
+Revised SLO-AIMD vs token-aware SLO-AIMD. 5 reps. Keep token-aware as core novelty only if improvement \(>\sim 10\%\) and violation/recovery is clearly better; otherwise secondary.
 
 RPS held at \(0.9 R_{knee}\) (request count unchanged, token demand changes):
 
@@ -157,18 +166,19 @@ If \(W_t\) is high, hold or decrease even when request-count \(C\) looks fine. D
 
 **Finding:** the same RPS is not the same LLM backend pressure.
 
-## E5 — Capacity / quota pressure
+## E5 — Capacity / quota pressure (paused)
 
-Separate section. Sweep offered load at 0.5 / 0.75 / 0.9 / 1.0 / 1.1 / 1.25× sustainable capacity. Record 429, retry amplification, queue growth, TTFT, goodput, adaptive \(C\). This is the only experiment that should aim at the quota cliff.
+First-round E5 measured gateway saturation at \(C=1\), not Bedrock RPM/TPM. Do not rerun. Later: delete, or design a bypass-limiter quota characterization.
 
-## E6 — Ablation
+## E6 — Ablation (after E3/E4)
 
-Full controller = token-aware SLO-AIMD. Remove:
+Do not rerun yet. Final set after revised controller is stable:
 
-1. token-awareness (most important)
-2. TTFT signal
-3. 429/error signal
-4. multiplicative decrease (secondary; becomes \(C-1\))
+1. Full
+2. \(-\) demand gate
+3. \(-\) TTFT
+4. \(-\) token-awareness
+5. \(-\) multiplicative decrease
 
 ## Metrics
 
@@ -176,13 +186,13 @@ Gateway `/metrics` (Prometheus):
 
 - `llm_offered_rps`, `llm_achieved_rps`
 - `llm_input_tokens_per_sec`, `llm_output_tokens_per_sec`
-- `llm_inflight_requests`, `llm_concurrency_limit`
+- `llm_inflight_requests`, `llm_actual_inflight`, `llm_concurrency_limit`, `llm_utilization`, `llm_queue_depth`
 - `llm_ttft_seconds`, `llm_request_latency_seconds`
 - `llm_throttle_total`, `llm_error_total`
 - `llm_slo_goodput_rps`
 - `bedrock_rpm_quota`, `bedrock_tpm_quota`, `bedrock_tpd_quota` (static gauges)
 
-Per-request JSONL is the paper source of truth (`queue_ms`, `ttft_ms`, `e2e_ms`, `slo_met`, `c_limit`, `w_t`, …).
+Per-request JSONL is the paper source of truth (`queue_ms`, `ttft_ms`, `backend_ttft_ms`, `e2e_ms`, `slo_met`, `c_limit`, `w_t`, …). Controller windows also expose `backend_ttft_p95_ms`.
 
 ## Findings the experiments are built to support
 

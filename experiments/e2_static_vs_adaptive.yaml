@@ -1,7 +1,8 @@
-name: e2_static_vs_adaptive
+name: e2_light_load
 experiment: E2
 mode: open_loop
-# 0.9 × R_knee is too tight when C_knee=1: open-loop queue wait dominates TTFT.
+# Light-load sanity for revised SLO-AIMD. Not a policy ranking.
+# Expect: goodput/TTFT ≈ Fixed-1, 0 Bedrock 429, adaptive C stays 1–2.
 rps_frac: 0.5
 workload:
   prompt_class: short
@@ -12,5 +13,7 @@ measure_s: 180
 repetitions: 5
 queue_max: 16
 queue_timeout_s: 2.0
-# cells are derived from --c-knee: Fixed-Low / Knee / High, Retry/Backoff, Gradient, SLO-AIMD
-# When C_knee=1, Fixed-Low is dropped (same as Knee). Fixed-High is C=2.
+cells:
+  - {name: fixed_1, policy: fixed, c: 1}
+  - {name: fixed_2, policy: fixed, c: 2}
+  - {name: slo_aimd, policy: slo_aimd, c: 1}

@@ -1,6 +1,8 @@
 name: e5_quota_pressure
 experiment: E5
 mode: open_loop
+# PAUSED. First-round E5 measured gateway saturation, not Bedrock quota.
+# Do not rerun until a bypass-limiter quota characterization is designed.
 capacity_ref: quota
 # 1.0x = short-workload quota envelope: min(800 RPM, 600k TPM) = 13.33 RPS (RPM binds)
 warmup_s: 60

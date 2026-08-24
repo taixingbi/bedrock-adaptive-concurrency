@@ -42,6 +42,9 @@ def test_infer_and_metrics(tmp_path: Path):
         assert metrics.status_code == 200
         text = metrics.text
         assert "llm_concurrency_limit" in text
+        assert "llm_actual_inflight" in text
+        assert "llm_utilization" in text
+        assert "llm_queue_depth" in text
         assert "llm_ttft_seconds" in text
         assert "bedrock_rpm_quota" in text
         assert "bedrock_tpm_quota" in text

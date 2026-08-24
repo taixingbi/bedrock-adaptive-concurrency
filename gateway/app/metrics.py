@@ -15,9 +15,16 @@ class GatewayMetrics:
             "llm_output_tokens_per_sec", "Output tokens per second", registry=self.registry
         )
         self.inflight = Gauge("llm_inflight_requests", "Current in-flight Bedrock requests", registry=self.registry)
+        self.actual_inflight = Gauge(
+            "llm_actual_inflight", "Actual in-flight Bedrock requests", registry=self.registry
+        )
         self.concurrency_limit = Gauge(
             "llm_concurrency_limit", "Controller concurrency limit C", registry=self.registry
         )
+        self.utilization = Gauge(
+            "llm_utilization", "actual_inflight / concurrency_limit", registry=self.registry
+        )
+        self.queue_depth = Gauge("llm_queue_depth", "Requests waiting for a C slot", registry=self.registry)
         self.slo_goodput_rps = Gauge(
             "llm_slo_goodput_rps", "SLO-compliant successful requests per second", registry=self.registry
         )
@@ -44,9 +51,12 @@ class GatewayMetrics:
         self.tpm_quota.set(tpm)
         self.tpd_quota.set(tpd)
 
-    def set_runtime(self, *, inflight: int, c: int) -> None:
+    def set_runtime(self, *, inflight: int, c: int, waiting: int = 0) -> None:
         self.inflight.set(inflight)
+        self.actual_inflight.set(inflight)
         self.concurrency_limit.set(c)
+        self.utilization.set(float(inflight) / max(int(c), 1))
+        self.queue_depth.set(waiting)
 
     def set_rates(
         self,

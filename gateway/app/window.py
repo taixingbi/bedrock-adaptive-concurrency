@@ -30,6 +30,11 @@ class Snapshot:
     waiting: int
     w_t: float
     queue_p95_ms: float | None
+    utilization: float = 0.0
+    queue_depth: int = 0
+    max_inflight: int = 0
+    max_waiting: int = 0
+    backend_ttft_p95_ms: float | None = None
 
 
 class ObservationWindow:
@@ -39,6 +44,7 @@ class ObservationWindow:
 
     def _reset(self) -> None:
         self._ttfts: list[float] = []
+        self._backend_ttfts: list[float] = []
         self._queues: list[float] = []
         self._n = 0
         self._offered = 0
@@ -48,10 +54,17 @@ class ObservationWindow:
         self._achieved = 0
         self._input_tokens = 0
         self._output_tokens = 0
+        self._max_inflight = 0
+        self._max_waiting = 0
 
     async def offered(self) -> None:
         async with self._lock:
             self._offered += 1
+
+    async def sample_load(self, inflight: int, waiting: int) -> None:
+        async with self._lock:
+            self._max_inflight = max(self._max_inflight, int(inflight))
+            self._max_waiting = max(self._max_waiting, int(waiting))
 
     async def observe(
         self,
@@ -64,11 +77,14 @@ class ObservationWindow:
         achieved: bool,
         input_tokens: int,
         output_tokens: int,
+        backend_ttft_ms: float | None = None,
     ) -> None:
         async with self._lock:
             self._n += 1
             if ttft_ms is not None:
                 self._ttfts.append(float(ttft_ms))
+            if backend_ttft_ms is not None:
+                self._backend_ttfts.append(float(backend_ttft_ms))
             self._queues.append(float(queue_ms))
             self._throttle += int(throttle)
             self._error += int(error)
@@ -84,6 +100,7 @@ class ObservationWindow:
             snap = Snapshot(
                 n=n,
                 ttft_p95_ms=percentile(self._ttfts, 0.95),
+                backend_ttft_p95_ms=percentile(self._backend_ttfts, 0.95),
                 throttle_n=self._throttle,
                 error_n=self._error,
                 throttle_rate=(self._throttle / n) if n else 0.0,
@@ -98,6 +115,10 @@ class ObservationWindow:
                 waiting=waiting,
                 w_t=w_t,
                 queue_p95_ms=percentile(self._queues, 0.95),
+                utilization=(float(inflight) / max(int(c), 1)),
+                queue_depth=int(waiting),
+                max_inflight=max(self._max_inflight, int(inflight)),
+                max_waiting=max(self._max_waiting, int(waiting)),
             )
             self._reset()
             return snap

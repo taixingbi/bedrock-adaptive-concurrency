@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     use_ttft_signal: bool = True
     use_throttle_signal: bool = True
     use_multiplicative_decrease: bool = True
+    use_demand_gate: bool = True
+    demand_queue_ms: float = 5.0
     retry_max: int = 3
     retry_base_s: float = 0.25
     timeseries_s: float = 1.0

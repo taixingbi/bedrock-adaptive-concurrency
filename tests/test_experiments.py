@@ -9,23 +9,20 @@ def test_e1_cells():
     assert [c["c"] for c in cells] == [1, 2, 4, 8, 16, 32, 64]
 
 
-def test_e2_cells_need_knee():
-    spec = expand_spec(load_spec(Path("experiments/e2_static_vs_adaptive.yaml")), {"c_knee": 16, "r_knee": 4.0})
+def test_e2_light_load_cells():
+    spec = expand_spec(load_spec(Path("experiments/e2_static_vs_adaptive.yaml")), {"c_knee": 1, "r_knee": 1.84})
     cells = cells_from_spec(spec, spec["_derived"])
+    assert [c["name"] for c in cells] == ["fixed_1", "fixed_2", "slo_aimd"]
+    assert [c["c"] for c in cells] == [1, 2, 1]
+    assert spec["offered_rps"] == 0.92
+
+
+def test_e2_derived_cells_when_unspecified():
+    cells = cells_from_spec({"experiment": "E2"}, {"c_knee": 16})
     names = [c["name"] for c in cells]
     assert names == ["fixed_low", "fixed_knee", "fixed_high", "retry_backoff", "gradient", "slo_aimd"]
     assert cells[0]["c"] == 8
     assert cells[2]["c"] == 32
-
-
-def test_e2_cells_skip_fixed_low_when_c_knee_is_1():
-    spec = expand_spec(load_spec(Path("experiments/e2_static_vs_adaptive.yaml")), {"c_knee": 1, "r_knee": 1.84})
-    cells = cells_from_spec(spec, spec["_derived"])
-    names = [c["name"] for c in cells]
-    assert names == ["fixed_knee", "fixed_high", "retry_backoff", "gradient", "slo_aimd"]
-    assert cells[0]["c"] == 1
-    assert cells[1]["c"] == 2
-    assert spec["offered_rps"] == 0.92
 
 
 def test_e4_phase_rps():

@@ -1,9 +1,12 @@
-name: e3_dynamic_load
+name: e3_dynamic_load_v2
 experiment: E3
 mode: open_loop
+# Main paper rerun. Revised SLO-AIMD vs Fixed-1 vs Gradient.
 warmup_s: 0
 measure_s: 420
-repetitions: 3
+repetitions: 5
+queue_max: 16
+queue_timeout_s: 2.0
 workload:
   prompt_class: short
   input_tokens: 512

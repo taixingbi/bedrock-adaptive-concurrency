@@ -2,7 +2,7 @@
 
 SLO-aware adaptive concurrency control for Amazon Bedrock. The control variable is gateway → Bedrock max in-flight concurrency \(C\), not RPM/TPM quota.
 
-Locked design: [docs/experiment-design.md](docs/experiment-design.md)
+Locked design: [docs/experiment-design.md](docs/experiment-design.md). Locked result claims: [results/SUMMARY.md](results/SUMMARY.md).
 
 ```
 Open-loop loadgen → LLM gateway → adaptive C controller → Bedrock ConverseStream → Llama 4 Maverick

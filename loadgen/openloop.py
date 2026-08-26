@@ -18,6 +18,8 @@ class Phase:
     prompt_class: str = "short"
     input_tokens: int | None = None
     max_tokens: int | None = None
+    tenant_id: str = "default"
+    mix: dict[str, float] | None = None
 
 
 @dataclass
@@ -36,14 +38,44 @@ def phase_at(phases: list[Phase], elapsed: float) -> Phase:
     return phases[-1]
 
 
+def pick_prompt_class(phase: Phase) -> str:
+    mix = phase.mix
+    if not mix:
+        return phase.prompt_class
+    r = random.random()
+    acc = 0.0
+    items = list(mix.items())
+    for i, (cls, frac) in enumerate(items):
+        acc += float(frac)
+        if r <= acc or i == len(items) - 1:
+            return str(cls)
+    return phase.prompt_class
+
+
+def phase_from_dict(raw: dict[str, Any], defaults: Phase | None = None) -> Phase:
+    base = defaults or Phase(until_s=0)
+    return Phase(
+        until_s=float(raw.get("until_s", base.until_s)),
+        rps=raw.get("rps", base.rps),
+        concurrency=raw.get("concurrency", base.concurrency),
+        prompt_class=raw.get("prompt_class", base.prompt_class),
+        input_tokens=raw.get("input_tokens", base.input_tokens),
+        max_tokens=raw.get("max_tokens", base.max_tokens),
+        tenant_id=str(raw.get("tenant_id", base.tenant_id)),
+        mix=raw.get("mix", base.mix),
+    )
+
+
 async def _one_request(client: httpx.AsyncClient, url: str, phase: Phase, stats: LoadStats) -> None:
+    prompt_class = pick_prompt_class(phase)
     body: dict[str, Any] = {
-        "prompt_class": phase.prompt_class,
+        "prompt_class": prompt_class,
         "temperature": 0,
+        "tenant_id": phase.tenant_id,
     }
-    if phase.input_tokens is not None:
+    if phase.input_tokens is not None and not phase.mix:
         body["input_tokens"] = phase.input_tokens
-    if phase.max_tokens is not None:
+    if phase.max_tokens is not None and not phase.mix:
         body["max_tokens"] = phase.max_tokens
     stats.launched += 1
     try:
@@ -110,18 +142,21 @@ async def run_open_loop(
 
 
 async def run(args: argparse.Namespace) -> LoadStats:
+    stats = LoadStats()
+    url = args.url.rstrip("/") + "/v1/infer"
+    poisson = bool(getattr(args, "poisson", False))
+    if getattr(args, "streams", None):
+        parsed = [[phase_from_dict(p) for p in stream] for stream in args.streams if stream]
+        duration = max((ph.until_s for stream in parsed for ph in stream), default=args.warmup_s + args.measure_s)
+        await asyncio.gather(
+            *[
+                run_open_loop(url=url, duration_s=duration, phases=stream, stats=stats, poisson=poisson)
+                for stream in parsed
+            ]
+        )
+        return stats
     if args.phases:
-        phases = [
-            Phase(
-                until_s=float(p["until_s"]),
-                rps=p.get("rps"),
-                concurrency=p.get("concurrency"),
-                prompt_class=p.get("prompt_class", args.prompt_class),
-                input_tokens=p.get("input_tokens"),
-                max_tokens=p.get("max_tokens"),
-            )
-            for p in args.phases
-        ]
+        phases = [phase_from_dict(p, Phase(until_s=0, prompt_class=args.prompt_class)) for p in args.phases]
     else:
         phases = [
             Phase(
@@ -131,16 +166,15 @@ async def run(args: argparse.Namespace) -> LoadStats:
                 prompt_class=args.prompt_class,
                 input_tokens=args.input_tokens,
                 max_tokens=args.max_tokens,
+                tenant_id=getattr(args, "tenant_id", "default"),
             )
         ]
     duration = args.warmup_s + args.measure_s
-    stats = LoadStats()
-    url = args.url.rstrip("/") + "/v1/infer"
     if args.mode == "closed_loop":
         concurrency = args.concurrency or phases[0].concurrency or 1
         await run_closed_loop(url=url, concurrency=concurrency, duration_s=duration, phases=phases, stats=stats)
     else:
-        await run_open_loop(url=url, duration_s=duration, phases=phases, stats=stats, poisson=args.poisson)
+        await run_open_loop(url=url, duration_s=duration, phases=phases, stats=stats, poisson=poisson)
     return stats
 
 
@@ -155,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-class", default="short")
     p.add_argument("--input-tokens", type=int, default=None)
     p.add_argument("--max-tokens", type=int, default=None)
+    p.add_argument("--tenant-id", default="default")
     p.add_argument("--poisson", action="store_true")
     return p
 
@@ -162,6 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = build_parser().parse_args()
     args.phases = None
+    args.streams = None
     stats = asyncio.run(run(args))
     print(
         f"launched={stats.launched} completed={stats.completed} "

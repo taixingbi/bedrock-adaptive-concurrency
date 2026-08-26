@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -38,7 +39,28 @@ class Settings(BaseSettings):
     retry_base_s: float = 0.25
     timeseries_s: float = 1.0
     mock_bedrock: bool = False
+    admit_caps: str = "global"
+    tenant_caps: dict[str, int] = Field(default_factory=dict)
+    class_caps: dict[str, int] = Field(default_factory=dict)
+    class_slo_ms: dict[str, float] = Field(default_factory=dict)
 
     @property
     def w_short(self) -> float:
         return self.short_input_tokens + self.token_lambda * self.short_output_tokens
+
+    @property
+    def admit_cap_set(self) -> set[str]:
+        return {part.strip() for part in self.admit_caps.split(",") if part.strip()}
+
+    @property
+    def use_tenant_cap(self) -> bool:
+        return "tenant" in self.admit_cap_set
+
+    @property
+    def use_class_cap(self) -> bool:
+        return "class" in self.admit_cap_set
+
+    def slo_ms_for(self, prompt_class: str) -> float:
+        if prompt_class in self.class_slo_ms:
+            return float(self.class_slo_ms[prompt_class])
+        return float(self.ttft_slo_ms)

@@ -1,35 +1,60 @@
 # Paper 9 experiment design (locked)
 
-**Topic:** SLO-Aware Adaptive Concurrency Control for Managed LLM APIs  
+**Topic:** Multi-Tenant and Class-Aware Admission Control for Opaque Managed LLM APIs  
 **Provider:** Amazon Bedrock  
 **Model:** Llama 4 Maverick (`us.meta.llama4-maverick-17b-instruct-v1:0`, US geo inference)  
-**Control variable:** \(C_t\) = gateway → Bedrock max in-flight requests  
+**Setting:** opaque backend — no GPU, KV-cache, or provider-scheduler telemetry. Gateway-visible signals only (queue, inflight \(C\), TTFT, 429, token occupancy \(W_t\)).
 
-Do **not** adjust RPM/TPM quota. Quota is static context only.
+Do **not** adjust RPM/TPM quota. Quota is static context only. Do **not** rerun E1–E4.
 
-## Question
+## Questions (compressed)
 
-When Bedrock backend capacity is opaque and both request length and offered load change, how should a gateway adapt concurrency to maximize SLO-compliant goodput?
+**RQ1 — Why is global concurrency insufficient?**  
+E1–E4. Fixed \(C\) is load-dependent; demand-gated AIMD helps under bursts; request-count \(C\) fails when token size shifts at constant RPS.
+
+**RQ2 — How do tenant and class interference show up on a managed LLM gateway?**  
+New E5 (noisy neighbor) and new E6 (same tenant, mixed classes). Tenant isolation and workload-class isolation are different problems.
+
+**RQ3 — Can tenant- and class-aware admission protect interactive SLOs with only gateway-visible signals?**  
+Nested budgets \(C_{global}\), \(C_t\), \(C_{t,c}\). No RL, no WFQ in v1.
 
 ## Architecture
+
+Characterization (E1–E4, already run):
 
 ```
 Open-loop Load Generator
         ↓
     LLM Gateway
         ↓
-Adaptive Concurrency Controller
+Adaptive global C controller
         ↓
 Amazon Bedrock (direct ConverseStream)
         ↓
 Llama 4 Maverick
 ```
 
-The paper gateway calls Bedrock directly. It does **not** proxy through `bedrock-inference-mvp` (Lambda Function URL). That stack only proves `llama4` streaming works in this account. Putting Lambda on the path would mix Lambda concurrency into \(C_{knee}\).
+Contribution (new E5/E6):
 
-Streaming is confirmed. TTFT is time from gateway arrival to first stream token (includes queue wait).
+```
+             Gateway
+                ↓
+        tenant admission
+          ↙           ↘
+      Tenant A      Tenant B
+          ↓            ↓
+       short         long
+          ↓            ↓
+       C_A(t)        C_B(t)
+          ↘            ↙
+          global budget
+                ↓
+             Bedrock
+```
 
-When \(C\) is full: bounded queue. Overflow is rejected and does not count as goodput. User-facing TTFT = queue wait + backend TTFT.
+The paper gateway calls Bedrock directly. It does **not** proxy through `bedrock-inference-mvp`. Putting Lambda on the path would mix Lambda concurrency into \(C_{knee}\).
+
+Streaming is confirmed. TTFT is time from gateway arrival to first stream token (includes queue wait). Overflow is rejected and does not count as goodput.
 
 ## Quota vs runtime (do not collapse these)
 
@@ -43,160 +68,177 @@ Published Llama 4 Maverick defaults (per account, per region, US geo / CRIS):
 
 These are **static context**, not the control variable.
 
-| Signal | Role |
-|---|---|
-| `bedrock_rpm_quota` = 800 | Static upper bound. Exposed, never used as a control law. |
-| `bedrock_tpm_quota` = 600000 | Static upper bound. Exposed, never used as a control law. |
-| `bedrock_tpd_quota` = 432000000 | Daily ceiling. Not binding for a single E1–E6 run. |
-| Throughput, TTFT, 429, tokens | Runtime observations. |
-| \(C\) | Controller output. |
-
 **Forbidden control law:** `TPM > 80% quota → decrease C`.
 
-Hard RPS envelopes (do not treat as the paper controller):
+Hard RPS envelopes (not the paper controller):
 
 - RPM cap: \(800 / 60 = 13.33\) RPS
-- `short` (512+128=640 tok): TPM cap \(600000 / (640 \times 60) = 15.63\) RPS → **RPM binds** at 13.33 RPS
-- `long` (4096+512=4608 tok): TPM cap \(600000 / (4608 \times 60) = 2.17\) RPS → **TPM binds** at 2.17 RPS
+- `short` (512+128=640 tok): RPM binds at 13.33 RPS
+- `long` (4096+512=4608 tok): TPM binds at 2.17 RPS
 
-That gap is why E4 exists: an RPS that is safe on `short` can be several times the `long` TPM cap.
+E1–E4 stay well below the RPM cliff. Retired quota-pressure E5 (`results/e5_quota_pressure/`) measured gateway \(C=1\) shedding, not Bedrock quota. Do not rerun. Do not cite.
 
-- E1–E3: stay \(\le 0.75 \times 13.33 \approx 10\) RPS unless \(R_{knee}\) is lower. If E1 starts returning 429s at high \(C\), stop the sweep and treat that as the quota cliff, not \(C_{knee}\).
-- E3 \(1.5 R_{knee}\): if that exceeds 13.33 RPS, the burst overlaps E5; record it, do not hide the 429s.
-- E4: keep constant \(0.9 R_{knee}\). The long phase will typically exceed 600k TPM; token-aware \(W_t\) should drop \(C\) from token pressure, not from `TPM/quota`.
-- E5: \(1.0\times\) = quota envelope for `short` (13.33 RPS), not \(R_{knee}\). This is the only experiment that aims at the cliff.
+## Workloads / classes
 
-## Workloads
+Keep E1–E4 classes so new runs are comparable. Do not invent a third length for E5/E6.
 
-| Class | Input | Output | Stream | Temperature |
-|---|---|---|---|---|
-| `short` | ~512 tokens | ~128 tokens | yes | 0 |
-| `long` | ~4096 tokens | ~512 tokens | yes | 0 |
+| Class | Role | Input | Output | Stream | Temperature | SLO |
+|---|---|---|---|---|---|---|
+| `short` | interactive | ~512 | ~128 | yes | 0 | TTFT \(\le 576\) ms |
+| `long` | heavy / batch | ~4096 | ~512 | yes | 0 | TTFT \(\le\) \(\mathrm{SLO}_{long}\) (lock after a 1-rep \(C=1\) long scout; working default 3000 ms) |
+
+Production can use per-class SLOs. Characterization E1 still uses **one** class (short) so \(C\) is not confounded with length.
 
 ## Derived parameters (from E1, not guessed)
 
-- \(C_{knee}\): throughput begins to plateau **and** TTFT / E2E tail rises.
-- \(R_{knee}\): sustainable achieved RPS at \(C_{knee}\).
-- TTFT SLO: \(1.5 \times\) P95 TTFT at \(C_{knee}\) on `short`.
-- Fixed-Low = \(\max(1, \lfloor C_{knee}/2 \rfloor)\); Fixed-Knee = \(C_{knee}\); Fixed-High = \(2 C_{knee}\).
-- Controller: \(C_{min}=1\), \(C_{max}=\max(64, 2C_{knee})\), window = 5s, \(C \leftarrow C+1\) or \(C \leftarrow \max(C_{min}, 0.7C)\).
+This account: \(C^*=1\) (best **observed** operating point on short, not “Bedrock knee must be 1”), \(R_{knee}\approx 1.84\) rps, interactive SLO \(= 576\) ms.
 
-## E1 — Concurrency characterization
+- Controller window = 5s, \(C \leftarrow C+1\) or \(C \leftarrow \max(C_{min}, 0.7C)\).
+- Demand gate: increase only if backend TTFT is healthy **and** the current \(C\) is pressed (waiters, or queue-wait P95 \(\ge 5\) ms).
+- Control uses **backend** TTFT. User-facing TTFT remains the goodput SLO.
 
-Prove adaptive concurrency is necessary.
-
-- Fixed `short` workload.
-- Sweep \(C \in \{1,2,4,8,16,32,64\}\). If unsaturated, keep doubling.
-- Saturate each \(C\) (closed-loop \(C\) workers).
-- 60s warm-up, 180s measure, 5 repetitions.
-- Record: throughput, SLO-goodput, TTFT P50/P95/P99, E2E P95/P99, 429, 5xx, token throughput.
-- Output: \(C_{knee}\), \(R_{knee}\), SLO. **E1 before E2–E6.**
-
-## E2 — Light-load sanity (rerun)
-
-Offered \(0.5 R_{knee}\). Not a ranking. Confirm revised SLO-AIMD does not drift \(C\) under unused headroom.
-
-| Policy | Role |
-|---|---|
-| Fixed-1 | Knee static \(C\) |
-| Fixed-2 | One step above knee |
-| Revised SLO-AIMD | Must stay at \(C \in \{1,2\}\) |
-
-5 reps. Pass if goodput/TTFT match Fixed-1, Bedrock 429 = 0, adaptive \(C\) does not climb.
-
-SLO-AIMD, every 5 seconds (revised):
-
-```
-if backend TTFT P95 > SLO or Bedrock 429 / error:
-    C = 0.7 × C
-elif backend TTFT P95 < SLO and throttle/error rate low and demand_pressure:
-    C = C + 1
-else:
-    hold
-```
-
-Control uses **backend** TTFT (admit → first token). User-facing TTFT (arrival → first token, includes queue) remains the goodput SLO and must not drive decrease: queue wait is demand, not Bedrock saturation.
-
-`demand_pressure` is true only when the current \(C\) is actually pressed: waiters exist in the window, or queue-wait P95 \(\ge 5\) ms. Vacant \(C\) (healthy backend TTFT, no queue) must not increment.
-
-Prefer decrease when both backend pressure and demand could apply.
-
-**Primary metric:**
+Isolation budgets for E5/E6 are derived from \(C^*\), not from a generic \(C_{global}=4\):
 
 \[
-\mathrm{Goodput} = \frac{\#\{\text{successful requests meeting SLO}\}}{\text{time}}
+C_{global} = 2,\quad C_A^{\max}=2,\quad C_B^{\max}=1,\quad C_{short}^{\max}=2,\quad C_{long}^{\max}=1
 \]
 
-## E3 — Dynamic load / burst (main rerun)
+Two slots is the smallest split that can isolate a noisy neighbor when \(C^*=1\). \(C_{global}=4\) would overshoot this backend.
 
-Policies: Fixed-1, Generic Gradient, Revised SLO-AIMD. 5 reps.
+## Admission (v1, no RL)
 
-Open-loop RPS, `short` workload:
+Admit iff all that apply for the selected policy:
 
-| Time | Offered RPS |
+\[
+\mathrm{inflight}_{global} < C_{global}
+\quad\land\quad
+\mathrm{inflight}_{t} < C_{t}
+\quad\land\quad
+\mathrm{inflight}_{t,c} < C_{t,c}
+\]
+
+Reject does not count as goodput. Policies below enable a subset of these caps. Global AIMD still adapts \(C_{global}(t)\) inside \([C_{min}, C_{max}]\) when the policy is adaptive; tenant/class caps stay static in v1.
+
+| Policy | Caps |
 |---|---|
-| 0–120s | \(0.5 R_{knee}\) |
-| 120–240s | \(0.9 R_{knee}\) |
-| 240–300s | \(1.5 R_{knee}\) |
-| 300–420s | \(0.6 R_{knee}\) |
+| Global Fixed | \(C_{global}=2\) |
+| Global Request-AIMD | demand-gated SLO-AIMD on \(C_{global}\) |
+| Global Token-Aware | token SLO-AIMD on \(C_{global}\) |
+| Tenant-only | \(C_{global}\) + \(C_A,C_B\) |
+| Class-aware | \(C_{global}\) + \(C_{short},C_{long}\) |
+| Tenant + class | all three nested |
 
-Time series: offered/achieved RPS, \(C(t)\), in-flight, TTFT P95, latency P95, goodput, 429, queue delay.
+## RQ1 — E1–E4 (done, do not rerun)
 
-Derived: adaptation time, recovery time, SLO-violation duration, overshoot, goodput.
+Canonical traces: `results/e1_pilot/`, `e2_light_load/`, `e3_dynamic_load_v2/`, `e4_token_shift_v2/`. Claims: `results/SUMMARY.md`.
 
-## E4 — Token-demand shift (novelty decision)
+### E1 — Concurrency characterization
 
-Revised SLO-AIMD vs token-aware SLO-AIMD. 5 reps. Keep token-aware as core novelty only if improvement \(>\sim 10\%\) and violation/recovery is clearly better; otherwise secondary.
+Fixed `short`. Closed-loop sweep \(C\). This account used cheap scout \(C\in\{1,2,4,8\}\), 1 rep. Output: \(C^*\), \(R_{knee}\), interactive SLO. Optional later: C=1,2,4 × 3–5 reps. Do not run `e1_sweep` (16/32/64).
 
-RPS held at \(0.9 R_{knee}\) (request count unchanged, token demand changes):
+Write **best observed operating point \(C^*=1\)**, not “true Bedrock knee equals 1”.
 
-| Time | Workload |
-|---|---|
-| 0–180s | 512 / 128 |
-| 180–300s | 4096 / 512 |
-| 300–480s | 512 / 128 |
+### E2 — Light-load sanity
 
-Compare SLO-AIMD vs token-aware SLO-AIMD. Token-aware extra signal:
+Offered \(0.5 R_{knee}\). Not a ranking. Fixed-1 vs Fixed-2 vs SLO-AIMD. Pass: goodput/TTFT match Fixed-1, Bedrock 429 = 0, adaptive \(C\) does not climb. Also shows \(C=2\) is fine under light load — usable \(C\) is load-dependent.
+
+### E3 — Dynamic load / burst
+
+Fixed-1 vs Gradient vs SLO-AIMD. Short only.
+
+| Phase | Time | Offered |
+|---|---|---|
+| P1 | 0–120s | \(0.5 R_{knee}\) |
+| P2 | 120–240s | \(0.9 R_{knee}\) |
+| P3 | 240–300s | \(1.5 R_{knee}\) burst |
+| P4 | 300–420s | \(0.6 R_{knee}\) recovery |
+
+### E4 — Token-demand shift
+
+RPS held at \(0.9 R_{knee}\). SLO-AIMD vs token-aware.
+
+| Phase | Time | Workload |
+|---|---|---|
+| P1 | 0–180s | short |
+| P2 | 180–300s | long |
+| P3 | 300–480s | short recovery |
+
+Token occupancy:
 
 \[
 W_t = \sum_{i \in \mathrm{inflight}} \bigl(\mathrm{inputTokens}_i + \lambda \cdot \widehat{\mathrm{outputTokens}}_i\bigr)
 \]
 
-If \(W_t\) is high, hold or decrease even when request-count \(C\) looks fine. Do **not** use quota percentage.
+## RQ2 / RQ3 — new E5 / E6
 
-**Finding:** the same RPS is not the same LLM backend pressure.
+Gateway nested limiter is implemented (`admit_caps` = global / tenant / class). Harness expands `e5_noisy_neighbor.yaml` and `e6_mixed_class.yaml`. Mock first: `experiments/dryrun_tenants.yaml`. Old `experiments/e5_quota_pressure.yaml` stays retired.
 
-## E5 — Capacity / quota pressure (paused)
+### E5 — Multi-tenant noisy neighbor
 
-First-round E5 measured gateway saturation at \(C=1\), not Bedrock RPM/TPM. Do not rerun. Later: delete, or design a bypass-limiter quota characterization.
+Two tenants, one Bedrock backend.
 
-## E6 — Ablation (after E3/E4)
+| Tenant | Class | Offer | SLO |
+|---|---|---|---|
+| A | short (interactive) | always on | TTFT 576 ms |
+| B | long (heavy) | burst, then off | \(\mathrm{SLO}_{long}\) |
 
-Do not rerun yet. Final set after revised controller is stable:
+| Phase | Time | A | B |
+|---|---|---|---|
+| P1 | 0–120s | \(0.5 R_{knee}\) short | 0 |
+| P2 | 120–300s | \(0.5 R_{knee}\) short | \(0.9 R_{knee}\) long |
+| P3 | 300–420s | \(0.5 R_{knee}\) short | 0 |
 
-1. Full
-2. \(-\) demand gate
-3. \(-\) TTFT
-4. \(-\) token-awareness
-5. \(-\) multiplicative decrease
+Policies: Global Fixed, Global Request-AIMD, Global Token-Aware, Tenant-only, Class-aware, Tenant+class. 5 reps.
+
+**Primary metrics — not aggregate goodput alone:**
+
+\[
+G_A,\ G_B
+\]
+
+plus A P95 TTFT, B completion rate, reject rate by tenant/class, global goodput, fairness (\(G_A\) vs \(G_B\)), A recovery time after B stops, Bedrock 429.
+
+Pass for Tenant+class: during P2, \(G_A\) stays near P1; Global Fixed / Request-AIMD let B crush A.
+
+### E6 — Same tenant, mixed classes
+
+One tenant. Mix short+long so a reviewer cannot say “tenant isolation was enough.”
+
+| Phase | Time | Mix |
+|---|---|---|
+| P1 | 0–120s | short only, \(0.5 R_{knee}\) |
+| P2 | 120–300s | 70% short / 30% long, total \(0.9 R_{knee}\) |
+| P3 | 300–420s | short only, \(0.5 R_{knee}\) |
+
+Policies: Tenant-only vs Tenant+class (Global Token-Aware as a third cell if budget allows). 5 reps.
+
+If tenant-only still lets long drag short, and class-aware restores short \(G\) / P95, then tenant isolation and workload isolation are distinct.
+
+## Retired / relocated
+
+| Old | Status |
+|---|---|
+| Quota-pressure E5 | Out. `results/e5_quota_pressure/` do not cite. |
+| Controller ablation (`results/e6_ablation/`) | Relabeled **E7 traces**. Token / TTFT ablations still support RQ1. Not the new paper E6. Optional rerun later (−demand-gate, 5 reps). |
 
 ## Metrics
 
-Gateway `/metrics` (Prometheus):
+Gateway `/metrics` (existing) plus E5/E6 labels `tenant`, `class`:
 
-- `llm_offered_rps`, `llm_achieved_rps`
-- `llm_input_tokens_per_sec`, `llm_output_tokens_per_sec`
-- `llm_inflight_requests`, `llm_actual_inflight`, `llm_concurrency_limit`, `llm_utilization`, `llm_queue_depth`
+- `llm_offered_rps`, `llm_achieved_rps`, `llm_slo_goodput_rps` (also per tenant/class)
+- `llm_inflight_requests`, `llm_concurrency_limit`, `llm_queue_depth`
 - `llm_ttft_seconds`, `llm_request_latency_seconds`
 - `llm_throttle_total`, `llm_error_total`
-- `llm_slo_goodput_rps`
-- `bedrock_rpm_quota`, `bedrock_tpm_quota`, `bedrock_tpd_quota` (static gauges)
+- `bedrock_rpm_quota`, `bedrock_tpm_quota`, `bedrock_tpd_quota` (static, never control)
 
-Per-request JSONL is the paper source of truth (`queue_ms`, `ttft_ms`, `backend_ttft_ms`, `e2e_ms`, `slo_met`, `c_limit`, `w_t`, …). Controller windows also expose `backend_ttft_p95_ms`.
+Per-request JSONL is the source of truth. New required fields: `tenant_id`, `class`, `slo_ms` (per-class), `slo_met`, `c_global`, `c_tenant`, `c_class`.
 
-## Findings the experiments are built to support
+Paper figures: 5–10 s rolling windows. Do not plot raw 1 s `achieved_rps`.
 
-1. Bedrock Llama 4 Maverick has a clear concurrency knee.
-2. Best concurrency moves with offered load, so a fixed \(C\) is unstable.
-3. SLO-aware adaptive concurrency improves SLO-goodput and cuts tail violations.
-4. Token demand changes the best \(C\) even when RPS is constant, so token-aware control fits LLM APIs better than request-count controllers.
+## Findings the campaign is built to support
+
+1. Global usable \(C\) is workload-dependent (E1+E2).
+2. Adaptive global \(C\) helps under demand bursts (E3).
+3. Request-count \(C\) fails under token-size shifts (E4).
+4. Multi-tenant sharing creates noisy-neighbor interference on an opaque backend (new E5).
+5. Tenant isolation ≠ class isolation; nested admission protects interactive SLOs without GPU telemetry (new E5+E6).

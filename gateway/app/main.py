@@ -40,7 +40,14 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
                     task.cancel()
 
     app = FastAPI(title="bedrock-adaptive-concurrency", version="0.1.0", lifespan=lifespan)
-    limiter = ConcurrencyLimiter(settings.concurrency_limit, settings.queue_max)
+    limiter = ConcurrencyLimiter(
+        settings.concurrency_limit,
+        settings.queue_max,
+        tenant_caps=settings.tenant_caps,
+        class_caps=settings.class_caps,
+        use_tenant_cap=settings.use_tenant_cap,
+        use_class_cap=settings.use_class_cap,
+    )
     controller = build_controller(settings)
     window = ObservationWindow()
     metrics = GatewayMetrics()
@@ -81,6 +88,9 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
             "waiting": limiter.waiting,
             "w_t": limiter.w_t,
             "ttft_slo_ms": settings.ttft_slo_ms,
+            "admit_caps": settings.admit_caps,
+            "tenant_inflight": limiter.tenant_inflight,
+            "class_inflight": limiter.class_inflight,
             "last_action": controller.last_action,
             "model_id": settings.model_id,
         }
@@ -122,19 +132,26 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
         payload.get("input_tokens"),
         payload.get("max_tokens"),
     )
+    tenant_id = str(payload.get("tenant_id") or payload.get("tenant") or "default")
+    slo_ms = settings.slo_ms_for(prompt_class)
     temperature = float(payload.get("temperature", 0.0))
     weight = float(inp) + settings.token_lambda * float(out)
 
-    acquired = await limiter.acquire(weight, timeout_s=settings.queue_timeout_s)
+    acquired = await limiter.acquire(
+        weight, timeout_s=settings.queue_timeout_s, tenant=tenant_id, prompt_class=prompt_class
+    )
     if not acquired.ok:
         event = _reject_event(
             settings,
+            limiter=limiter,
             arrival_ts=arrival_ts,
             reason=acquired.reason,
             prompt_class=prompt_class,
+            tenant_id=tenant_id,
             input_tokens=inp,
             max_tokens=out,
             weight=weight,
+            slo_ms=slo_ms,
         )
         await window.observe(
             ttft_ms=None,
@@ -167,13 +184,13 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
             result = await _invoke(app, payload, inp, out, temperature, time.time())
             result.retries = retries
     finally:
-        await limiter.release(weight)
+        await limiter.release(weight, tenant=tenant_id, prompt_class=prompt_class)
         metrics.set_runtime(inflight=limiter.inflight, c=limiter.limit, waiting=limiter.waiting)
 
     user_ttft_ms = None if result.first_token_ts is None else (result.first_token_ts - arrival_ts) * 1000
     user_e2e_ms = (result.finish_ts - arrival_ts) * 1000
     achieved = bool(result.first_token_ts) and not result.bedrock_429 and not result.bedrock_5xx
-    slo_met = achieved and user_ttft_ms is not None and user_ttft_ms <= settings.ttft_slo_ms
+    slo_met = achieved and user_ttft_ms is not None and user_ttft_ms <= slo_ms
 
     if result.bedrock_429:
         metrics.throttle_total.inc()
@@ -218,15 +235,19 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
         "bedrock_5xx": result.bedrock_5xx,
         "retries": result.retries,
         "prompt_class": prompt_class,
+        "tenant_id": tenant_id,
         "requested_input_tokens": inp,
         "requested_max_tokens": out,
         "input_tokens": result.input_tokens,
         "output_tokens": result.output_tokens,
         "c_limit": limiter.limit,
+        "c_global": limiter.limit,
+        "c_tenant": limiter.tenant_limit(tenant_id),
+        "c_class": limiter.class_limit(prompt_class),
         "inflight": limiter.inflight,
         "w_t": limiter.w_t,
         "weight": weight,
-        "ttft_slo_ms": settings.ttft_slo_ms,
+        "ttft_slo_ms": slo_ms,
         "model_id": settings.model_id,
         "path": request.url.path,
     }
@@ -260,12 +281,15 @@ async def _invoke(
 def _reject_event(
     settings: Settings,
     *,
+    limiter: ConcurrencyLimiter,
     arrival_ts: float,
     reason: str,
     prompt_class: str,
+    tenant_id: str,
     input_tokens: int,
     max_tokens: int,
     weight: float,
+    slo_ms: float,
 ) -> dict[str, Any]:
     return {
         "run_id": settings.run_id,
@@ -285,15 +309,19 @@ def _reject_event(
         "bedrock_5xx": False,
         "retries": 0,
         "prompt_class": prompt_class,
+        "tenant_id": tenant_id,
         "requested_input_tokens": input_tokens,
         "requested_max_tokens": max_tokens,
         "input_tokens": 0,
         "output_tokens": 0,
-        "c_limit": settings.concurrency_limit,
-        "inflight": 0,
-        "w_t": 0.0,
+        "c_limit": limiter.limit,
+        "c_global": limiter.limit,
+        "c_tenant": limiter.tenant_limit(tenant_id),
+        "c_class": limiter.class_limit(prompt_class),
+        "inflight": limiter.inflight,
+        "w_t": limiter.w_t,
         "weight": weight,
-        "ttft_slo_ms": settings.ttft_slo_ms,
+        "ttft_slo_ms": slo_ms,
         "model_id": settings.model_id,
     }
 
@@ -384,6 +412,8 @@ async def _timeseries_loop(app: FastAPI) -> None:
                 "queue_p95_ms": None if snap is None else snap.queue_p95_ms,
                 "throttle_n": 0 if snap is None else snap.throttle_n,
                 "last_action": app.state.controller.last_action,
+                "tenant_inflight": limiter.tenant_inflight,
+                "class_inflight": limiter.class_inflight,
             }
         )
 

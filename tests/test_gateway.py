@@ -13,6 +13,7 @@ def test_build_controller_names():
     assert build_controller(Settings(policy="retry_backoff")).retry_on_throttle
     assert build_controller(Settings(policy="slo_aimd")).name == "slo_aimd"
     assert build_controller(Settings(policy="token_slo_aimd")).name == "token_slo_aimd"
+    assert build_controller(Settings(policy="tenant_admit")).name == "tenant_admit"
 
 
 def test_infer_and_metrics(tmp_path: Path):
@@ -51,6 +52,40 @@ def test_infer_and_metrics(tmp_path: Path):
         assert "bedrock_tpd_quota" in text
     events = (tmp_path / "test" / "events.jsonl").read_text(encoding="utf-8")
     assert "ADMIT" in events
+
+
+def test_tenant_and_class_slo_on_event(tmp_path: Path):
+    settings = Settings(
+        policy="tenant_admit",
+        concurrency_limit=2,
+        queue_max=8,
+        results_path=str(tmp_path),
+        run_id="tenant",
+        mock_bedrock=True,
+        ttft_slo_ms=2000,
+        class_slo_ms={"short": 576, "long": 3000},
+        tenant_caps={"A": 2, "B": 1},
+        class_caps={"short": 2, "long": 1},
+        admit_caps="global,tenant,class",
+        controller_window_s=60,
+        timeseries_s=60,
+    )
+    app = create_app(settings, bedrock_client=MockBedrock(ttft_s=0.0))
+    with TestClient(app) as client:
+        resp = client.post(
+            "/v1/infer",
+            json={"prompt_class": "short", "max_tokens": 8, "tenant_id": "A"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["tenant_id"] == "A"
+        assert body["ttft_slo_ms"] == 576
+        assert body["c_global"] == 2
+        assert body["c_tenant"] == 2
+        assert body["c_class"] == 2
+        health = client.get("/health").json()
+        assert health["admit_caps"] == "global,tenant,class"
+        assert health["policy"] == "tenant_admit"
 
 
 def test_queue_reject(tmp_path: Path):

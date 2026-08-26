@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.knee import find_knee
-from analysis.metrics import load_events, summarize
+from analysis.metrics import load_events, summarize, summarize_groups
 from analysis.plot import plot_e1, plot_timeseries
 from analysis.quota import (
     BEDROCK_RPM_QUOTA,
@@ -39,6 +39,10 @@ def expand_spec(spec: dict[str, Any], derived: dict[str, Any]) -> dict[str, Any]
     r_knee = float(derived.get("r_knee") or spec.get("r_knee") or 0.0)
     c_knee = derived.get("c_knee") if derived.get("c_knee") is not None else spec.get("c_knee")
     for phase in spec.get("phases") or []:
+        if phase.get("tenants"):
+            for tcfg in phase["tenants"].values():
+                if tcfg.get("rps") is None and tcfg.get("rps_frac") is not None:
+                    tcfg["rps"] = float(tcfg["rps_frac"]) * r_knee
         if phase.get("rps") is None and phase.get("rps_frac") is not None:
             phase["rps"] = float(phase["rps_frac"]) * r_knee
         if phase.get("prompt_class") is None:
@@ -49,11 +53,17 @@ def expand_spec(spec: dict[str, Any], derived: dict[str, Any]) -> dict[str, Any]
         spec["offered_rps"] = float(spec["rps_frac"]) * r_knee
     spec["_derived"] = {"r_knee": r_knee, "c_knee": c_knee, **derived}
     for phase in spec.get("phases") or []:
-        if phase.get("rps") is None:
-            continue
-        msg = warn_rps(float(phase["rps"]), phase.get("prompt_class", "short"))
-        if msg:
-            print(f"quota warning: {msg}")
+        rps_targets: list[tuple[float, str]] = []
+        if phase.get("tenants"):
+            for tcfg in phase["tenants"].values():
+                if tcfg.get("rps"):
+                    rps_targets.append((float(tcfg["rps"]), tcfg.get("prompt_class", "short")))
+        elif phase.get("rps") is not None:
+            rps_targets.append((float(phase["rps"]), phase.get("prompt_class", "short")))
+        for rps, cls in rps_targets:
+            msg = warn_rps(rps, cls)
+            if msg:
+                print(f"quota warning: {msg}")
     return spec
 
 
@@ -122,35 +132,101 @@ def cell_env(spec: dict[str, Any], cell: dict[str, Any], run_id: str, args: argp
         "QUEUE_TIMEOUT_S": str(merged.get("queue_timeout_s", spec.get("queue_timeout_s", 2.0))),
         "MODEL_ID": str(merged.get("model_id", "us.meta.llama4-maverick-17b-instruct-v1:0")),
         "AWS_REGION": str(merged.get("aws_region", "us-east-1")),
+        "ADMIT_CAPS": ",".join(str(x) for x in (merged.get("caps") or spec.get("admit_caps") or ["global"])),
+        "TENANT_CAPS": json.dumps(_tenant_caps(spec)),
+        "CLASS_CAPS": json.dumps(_class_caps(spec)),
+        "CLASS_SLO_MS": json.dumps(_class_slo(spec, args)),
     }
+    if spec.get("c_global") is not None and args.c_max is None:
+        env["C_MAX"] = str(spec["c_global"])
+        env["CONCURRENCY_LIMIT"] = str(merged.get("c", spec.get("c_global")))
     return env
 
 
+def _tenant_caps(spec: dict[str, Any]) -> dict[str, int]:
+    tenants = spec.get("tenants") or {}
+    caps = {str(tid): int(cfg.get("c_max")) for tid, cfg in tenants.items() if cfg.get("c_max") is not None}
+    if spec.get("tenant", {}).get("c_max") is not None:
+        caps[str(spec["tenant"].get("id", "A"))] = int(spec["tenant"]["c_max"])
+    return caps
+
+
+def _class_caps(spec: dict[str, Any]) -> dict[str, int]:
+    return {str(k): int(v) for k, v in (spec.get("class_caps") or {}).items()}
+
+
+def _class_slo(spec: dict[str, Any], args: argparse.Namespace) -> dict[str, float]:
+    slo = {str(k): float(v) for k, v in (spec.get("slo") or {}).items()}
+    for tid, cfg in (spec.get("tenants") or {}).items():
+        cls = cfg.get("class")
+        if cls is not None and cfg.get("ttft_slo_ms") is not None:
+            slo[str(cls)] = float(cfg["ttft_slo_ms"])
+    if args.slo_ms is not None and "short" not in slo:
+        slo["short"] = float(args.slo_ms)
+    return slo
+
+
 def phases_for(spec: dict[str, Any], cell: dict[str, Any]) -> list[Phase]:
+    return streams_for(spec, cell)[0]
+
+
+def streams_for(spec: dict[str, Any], cell: dict[str, Any]) -> list[list[Phase]]:
     warmup = float(spec.get("warmup_s", 0))
     measure = float(spec.get("measure_s", 30))
     workload = spec.get("workload") or {}
-    if spec.get("phases"):
+    default_tenant = str((spec.get("tenant") or {}).get("id") or "default")
+    raw_phases = spec.get("phases")
+    if raw_phases and (raw_phases[0].get("tenants")):
+        tenant_ids: list[str] = []
+        for phase in raw_phases:
+            for tid in (phase.get("tenants") or {}):
+                if tid not in tenant_ids:
+                    tenant_ids.append(str(tid))
+        streams: list[list[Phase]] = []
+        for tid in tenant_ids:
+            plist: list[Phase] = []
+            for phase in raw_phases:
+                tcfg = (phase.get("tenants") or {}).get(tid) or {"rps": 0}
+                plist.append(
+                    Phase(
+                        until_s=float(phase["until_s"]),
+                        rps=float(tcfg.get("rps") or 0.0),
+                        concurrency=cell.get("c"),
+                        prompt_class=tcfg.get("prompt_class", "short"),
+                        tenant_id=tid,
+                    )
+                )
+            streams.append(plist)
+        return streams
+    if raw_phases:
+        tenant_id = default_tenant if spec.get("tenant") else "default"
         return [
-            Phase(
-                until_s=float(p["until_s"]),
-                rps=p.get("rps"),
-                concurrency=p.get("concurrency") or cell.get("c"),
-                prompt_class=p.get("prompt_class", workload.get("prompt_class", "short")),
-                input_tokens=p.get("input_tokens", workload.get("input_tokens")),
-                max_tokens=p.get("max_tokens", workload.get("max_tokens")),
-            )
-            for p in spec["phases"]
+            [
+                Phase(
+                    until_s=float(p["until_s"]),
+                    rps=p.get("rps"),
+                    concurrency=p.get("concurrency") or cell.get("c"),
+                    prompt_class=p.get("prompt_class", workload.get("prompt_class", "short")),
+                    input_tokens=p.get("input_tokens", workload.get("input_tokens")),
+                    max_tokens=p.get("max_tokens", workload.get("max_tokens")),
+                    tenant_id=tenant_id,
+                    mix=p.get("mix"),
+                )
+                for p in raw_phases
+            ]
         ]
     return [
-        Phase(
-            until_s=warmup + measure,
-            rps=cell.get("rps", spec.get("offered_rps")),
-            concurrency=cell.get("c") or spec.get("c"),
-            prompt_class=workload.get("prompt_class", "short"),
-            input_tokens=workload.get("input_tokens"),
-            max_tokens=workload.get("max_tokens"),
-        )
+        [
+            Phase(
+                until_s=warmup + measure,
+                rps=cell.get("rps", spec.get("offered_rps")),
+                concurrency=cell.get("c") or spec.get("c"),
+                prompt_class=workload.get("prompt_class", "short"),
+                input_tokens=workload.get("input_tokens"),
+                max_tokens=workload.get("max_tokens"),
+                tenant_id=default_tenant if spec.get("tenant") else "default",
+            )
+        ]
     ]
 
 
@@ -158,6 +234,22 @@ def cells_from_spec(spec: dict[str, Any], derived: dict[str, Any]) -> list[dict[
     if spec.get("cells"):
         return list(spec["cells"])
     experiment = spec.get("experiment", "")
+    if experiment in {"E5_noisy", "E6_mixed"}:
+        c0 = int(spec.get("c_global") or derived.get("c_knee") or 2)
+        cells = []
+        for policy in spec.get("policies") or []:
+            if isinstance(policy, str):
+                cells.append({"name": policy, "policy": policy, "c": c0, "caps": ["global"]})
+                continue
+            cells.append(
+                {
+                    "name": policy["name"],
+                    "policy": policy.get("policy", policy["name"]),
+                    "c": int(policy.get("c", c0)),
+                    "caps": policy.get("caps") or ["global"],
+                }
+            )
+        return cells
     if experiment == "E1" or spec.get("concurrency"):
         return [{"name": f"c{c}", "policy": "fixed", "c": int(c)} for c in spec["concurrency"]]
     if experiment == "E2":
@@ -235,15 +327,15 @@ def run_cell(spec: dict[str, Any], cell: dict[str, Any], args: argparse.Namespac
     proc = start_gateway(env, port)
     try:
         wait_health(url)
-        phases = phases_for(spec, cell)
+        streams = streams_for(spec, cell)
         duration = float(spec.get("warmup_s", 0)) + float(spec.get("measure_s", 30))
         if spec.get("phases"):
-            duration = max(p.until_s for p in phases)
+            duration = max(p.until_s for stream in streams for p in stream)
         load_args = _Args(
             url=url,
             mode=spec.get("mode", "open_loop"),
             rps=cell.get("rps") or spec.get("offered_rps") or 1.0,
-            concurrency=int(cell.get("c") or spec.get("c") or 1),
+            concurrency=int(cell.get("c") or spec.get("c") or spec.get("c_global") or 1),
             warmup_s=0.0,
             measure_s=duration,
             prompt_class=(spec.get("workload") or {}).get("prompt_class", "short"),
@@ -258,8 +350,26 @@ def run_cell(spec: dict[str, Any], cell: dict[str, Any], args: argparse.Namespac
                     "prompt_class": p.prompt_class,
                     "input_tokens": p.input_tokens,
                     "max_tokens": p.max_tokens,
+                    "tenant_id": p.tenant_id,
+                    "mix": p.mix,
                 }
-                for p in phases
+                for p in streams[0]
+            ],
+            streams=[
+                [
+                    {
+                        "until_s": p.until_s,
+                        "rps": p.rps,
+                        "concurrency": p.concurrency,
+                        "prompt_class": p.prompt_class,
+                        "input_tokens": p.input_tokens,
+                        "max_tokens": p.max_tokens,
+                        "tenant_id": p.tenant_id,
+                        "mix": p.mix,
+                    }
+                    for p in stream
+                ]
+                for stream in streams
             ],
         )
         asyncio.run(run_load(load_args))
@@ -272,6 +382,8 @@ def run_cell(spec: dict[str, Any], cell: dict[str, Any], args: argparse.Namespac
     summary["rep"] = rep
     summary["c"] = cell.get("c")
     summary["policy"] = env["POLICY"]
+    summary["by_tenant"] = summarize_groups(events, key="tenant_id")
+    summary["by_class"] = summarize_groups(events, key="prompt_class")
     (result_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 

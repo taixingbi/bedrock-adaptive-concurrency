@@ -6,6 +6,7 @@ from app.controllers.fixed import FixedController
 from app.controllers.gradient import GradientController
 from app.controllers.retry_backoff import RetryBackoffController
 from app.controllers.slo_aimd import SloAimdController
+from app.controllers.tenant_admit import TenantAdmitController
 from app.controllers.token_slo_aimd import TokenSloAimdController
 
 
@@ -21,4 +22,6 @@ def build_controller(settings: Settings) -> Controller:
         return SloAimdController(settings)
     if name in {"token_slo_aimd", "token_aware", "full"}:
         return TokenSloAimdController(settings)
+    if name in {"tenant_admit", "tenant_class", "class_aware"}:
+        return TenantAdmitController(settings)
     raise ValueError(f"unknown policy: {settings.policy}")

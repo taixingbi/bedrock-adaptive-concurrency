@@ -1,0 +1,32 @@
+name: dryrun_tenants
+experiment: E5_noisy
+mode: open_loop
+warmup_s: 0
+measure_s: 2
+repetitions: 1
+queue_max: 8
+queue_timeout_s: 1.0
+c_global: 2
+tenants:
+  A:
+    class: short
+    c_max: 2
+    ttft_slo_ms: 576
+  B:
+    class: long
+    c_max: 1
+    ttft_slo_ms: 3000
+class_caps:
+  short: 2
+  long: 1
+policies:
+  - {name: tenant_class, policy: tenant_admit, c: 2, caps: [global, tenant, class]}
+phases:
+  - until_s: 1
+    tenants:
+      A: {rps: 2, prompt_class: short}
+      B: {rps: 0}
+  - until_s: 2
+    tenants:
+      A: {rps: 2, prompt_class: short}
+      B: {rps: 1, prompt_class: long}

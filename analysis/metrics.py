@@ -83,6 +83,13 @@ def summarize(events: list[dict[str, Any]], *, warmup_s: float = 0.0) -> dict[st
     }
 
 
+def summarize_groups(events: list[dict[str, Any]], *, key: str, warmup_s: float = 0.0) -> dict[str, Any]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for event in filter_warmup(events, warmup_s):
+        grouped.setdefault(str(event.get(key) or "default"), []).append(event)
+    return {name: summarize(rows) for name, rows in grouped.items()}
+
+
 def _mean(values: list[Any]) -> float | None:
     nums = [float(v) for v in values if v is not None]
     if not nums:

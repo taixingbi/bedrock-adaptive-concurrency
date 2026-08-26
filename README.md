@@ -1,11 +1,11 @@
 # bedrock-adaptive-concurrency
 
-SLO-aware adaptive concurrency control for Amazon Bedrock. The control variable is gateway → Bedrock max in-flight concurrency \(C\), not RPM/TPM quota.
+Multi-tenant and class-aware admission control for opaque managed LLM APIs (Amazon Bedrock). Gateway-visible signals only — no GPU / KV-cache telemetry. Nested budgets \(C_{global}\), \(C_t\), \(C_{t,c}\); quota is static context, not the control law.
 
-Locked design: [docs/experiment-design.md](docs/experiment-design.md). Locked result claims: [results/SUMMARY.md](results/SUMMARY.md).
+Locked design: [docs/experiment-design.md](docs/experiment-design.md). RQ1 claims (E1–E4): [results/SUMMARY.md](results/SUMMARY.md).
 
 ```
-Open-loop loadgen → LLM gateway → adaptive C controller → Bedrock ConverseStream → Llama 4 Maverick
+Open-loop loadgen → LLM gateway → tenant/class admission + adaptive C → Bedrock ConverseStream → Llama 4 Maverick
 ```
 
 Model: `us.meta.llama4-maverick-17b-instruct-v1:0` (US geo, `us-east-1`). Call Bedrock directly. Do not put `bedrock-inference-mvp` (Lambda Function URL) on this path.
@@ -50,7 +50,7 @@ Real Maverick on `short` (512/128) should look like: 1–2 OK requests in 1s, TT
 
 `scripts/run_experiment.py` starts and stops its own gateway. Stop any uvicorn on the same port first.
 
-Rerun lock: controller demand-gate → **E2 light-load** → **E3** (main) → **E4** → decide token-aware → E6 last. **E5 paused.** First-round traces stay under the old result names.
+RQ1 (E1–E4) is done — do not rerun. Nested tenant/class admission is implemented. Next: mock `dryrun_tenants`, then **new E5** / **new E6** on Bedrock. Retired: `e5_quota_pressure.yaml`. Old `results/e6_ablation/` is E7 traces, not the new E6.
 
 ```bash
 # cheap knee scout: C=1,2,4,8; 30s warmup + 60s measure; 1 rep
@@ -75,6 +75,13 @@ python scripts/run_experiment.py experiments/e3_dynamic_load.yaml --c-knee 1 --r
 
 # E4 token-shift decision → results/e4_token_shift_v2
 python scripts/run_experiment.py experiments/e4_token_shift.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+
+# nested admission mock
+python scripts/run_experiment.py experiments/dryrun_tenants.yaml --mock --reps 1 --port 8080
+
+# new E5 / E6 (Bedrock; 5 reps)
+python scripts/run_experiment.py experiments/e5_noisy_neighbor.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+python scripts/run_experiment.py experiments/e6_mixed_class.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 ```
 
 Optional PNGs: add `--plot`. Local harness check: `python scripts/run_experiment.py experiments/dryrun.yaml --mock --reps 1 --port 8080`.
@@ -90,7 +97,7 @@ python -m loadgen.openloop --url http://127.0.0.1:8080 --mode closed_loop --conc
 
 
 
-Open-loop RPS (E2–E5):
+Open-loop RPS (E2–E4, later E5/E6):
 
 ```bash
 python -m loadgen.openloop --url http://127.0.0.1:8080 --mode open_loop --rps 4 --measure-s 180 --prompt-class short
@@ -103,7 +110,7 @@ Published Maverick defaults: 800 RPM, 600k TPM, 432M TPD.
 - `short` (640 tok): RPM binds at 13.33 RPS
 - `long` (4608 tok): TPM binds at 2.17 RPS
 
-E1–E3 stay \(\le 0.75 \times 13.33 \approx 10\) RPS unless \(R_{knee}\) is lower. E5 uses 13.33 RPS as \(1.0\times\). Same RPS on `long` can exceed 600k TPM; that is the E4 finding, not a `TPM > 80% quota → decrease C` control law.
+E1–E4 stay \(\le 0.75 \times 13.33 \approx 10\) RPS unless \(R_{knee}\) is lower. Same RPS on `long` can exceed 600k TPM; that is the E4 finding, not a `TPM > 80% quota → decrease C` control law. The old quota-pressure E5 is retired.
 
 Gauges `bedrock_rpm_quota`, `bedrock_tpm_quota`, and `bedrock_tpd_quota` are exposed and never used to set \(C\).
 
@@ -116,6 +123,7 @@ Gauges `bedrock_rpm_quota`, `bedrock_tpm_quota`, and `bedrock_tpd_quota` are exp
 | `gradient` | Adapt \(C\) from TTFT P95 trend |
 | `slo_aimd` | \(C+1\) / \(0.7C\) from TTFT P95 and throttle |
 | `token_slo_aimd` | SLO-AIMD plus inflight token pressure \(W_t\) |
+| `tenant_admit` | Nested caps \(C_{global}\), \(C_t\), \(C_{t,c}\) (E5/E6) |
 
 ## Tests
 

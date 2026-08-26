@@ -1,8 +1,10 @@
 # Results claims (locked)
 
-Campaign index for the paper. Per-request JSONL is the source of truth. Each `summary.json` is one row per cell×rep — it does not store means, medians, or phase splits.
+RQ1 campaign index (E1–E4). New paper E5/E6 (noisy-neighbor / mixed-class) are **not run**. Per-request JSONL is the source of truth. Each `summary.json` is one row per cell×rep — it does not store means, medians, or phase splits.
 
-Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C_{knee}=1\), \(R_{knee}\approx 1.84\) rps, TTFT SLO \(= 576\) ms (\(1.5\times\) C=1 P95). Controller uses **backend** TTFT; user-facing TTFT (includes queue) is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
+Design upgrade: [docs/experiment-design.md](../docs/experiment-design.md). Title is now multi-tenant + class-aware admission. Do not rerun E1–E4.
+
+Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
 
 ## Canonical vs do-not-cite
 
@@ -11,13 +13,14 @@ Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C_{knee}=1\), \(R_{
 | E1 knobs | `e1_pilot/` | Cheap C=1,2,4,8 scout. Do not run `e1_sweep`. |
 | E2 sanity | `e2_light_load/` | Demand-gated SLO-AIMD. |
 | E3 main | `e3_dynamic_load_v2/` | Backend-TTFT + demand gate, 5 reps. |
-| E4 novelty | `e4_token_shift_v2/` | Keep token-aware. |
-| E6 ablation | `e6_ablation/` | E4 workload, 3 reps. |
+| E4 novelty | `e4_token_shift_v2/` | Keep token-aware. RQ1. |
+| E7 traces (old ablation) | `e6_ablation/` | Global token/TTFT ablation. **Not** the new paper E6. |
 | ignore | `e2_static_vs_adaptive/`, `e2_pilot/` | Vacant-\(C\) climb under light load. |
 | ignore | `e3_dynamic_load/` | Vacant \(C\approx 20\). Do **not** claim that run’s P95 cut. |
 | ignore | `e4_token_shift/` | Same vacant-\(C\) controller. |
-| paused | `e5_quota_pressure/` | Measured gateway saturation at \(C=1\), not RPM/TPM. Do not rerun. |
-| ignore | `dryrun/`, `local/` | Mock / smoke. |
+| retired | `e5_quota_pressure/` | Gateway \(C=1\) overload, not quota. Do not cite. New E5 is `e5_noisy_neighbor` (not run). |
+| not run | `e5_noisy_neighbor`, `e6_mixed_class` | RQ2/RQ3. Need nested admission first. |
+| ignore | `dryrun/`, `dryrun_tenants/`, `local/` | Mock / smoke. |
 
 ## E1 — knee (`e1_pilot/`, 1 rep, closed-loop)
 
@@ -109,9 +112,9 @@ YAML that ran: full, −token, −TTFT, −throttle, −MD. Spec wanted −deman
 - Do not claim E3 v2 cut P95 (2140 vs 2173 ms).
 - Do not treat gateway `queue_timeout` 429s as Bedrock throttle.
 - Do not write `TPM > 80% quota → decrease C`.
-- E5 does not support a quota-cliff claim.
-- E6 did not ablate the demand gate. −MD is not identified at this \(C\).
-- E4/E6 P2 token-aware goodput is ~0 by design (reject longs). The metric that matters is P3.
+- Retired quota E5 does not support a quota-cliff claim.
+- `results/e6_ablation/` did not ablate the demand gate. −MD is not identified at this \(C\). It is E7 traces, not the new mixed-class E6.
+- E4 / old ablation P2 token-aware goodput is ~0 by design (reject longs). The metric that matters is P3.
 
 ## Recompute
 

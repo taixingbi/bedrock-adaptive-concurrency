@@ -61,3 +61,47 @@ def test_queue_timeout():
         await limiter.release(1)
 
     asyncio.run(_run())
+
+
+def test_tenant_cap_rejects_without_blocking_other_tenant():
+    async def _run():
+        limiter = ConcurrencyLimiter(
+            limit=2,
+            queue_max=4,
+            tenant_caps={"A": 1, "B": 1},
+            use_tenant_cap=True,
+        )
+        a = await limiter.acquire(1, tenant="A")
+        b = await limiter.acquire(1, tenant="B")
+        assert a.ok and b.ok
+        extra_a = await limiter.acquire(1, tenant="A")
+        assert not extra_a.ok
+        assert extra_a.reason == "tenant_full"
+        await limiter.release(1, tenant="A")
+        again = await limiter.acquire(1, tenant="A")
+        assert again.ok
+        await limiter.release(1, tenant="A")
+        await limiter.release(1, tenant="B")
+
+    asyncio.run(_run())
+
+
+def test_class_cap_rejects_long_but_admits_short():
+    async def _run():
+        limiter = ConcurrencyLimiter(
+            limit=2,
+            queue_max=4,
+            class_caps={"short": 2, "long": 1},
+            use_class_cap=True,
+        )
+        long1 = await limiter.acquire(1, prompt_class="long")
+        long2 = await limiter.acquire(1, prompt_class="long")
+        assert long1.ok
+        assert not long2.ok
+        assert long2.reason == "class_full"
+        short = await limiter.acquire(1, prompt_class="short")
+        assert short.ok
+        await limiter.release(1, prompt_class="long")
+        await limiter.release(1, prompt_class="short")
+
+    asyncio.run(_run())

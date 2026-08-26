@@ -1,5 +1,5 @@
 from analysis.knee import find_knee
-from analysis.metrics import filter_warmup, percentile, summarize
+from analysis.metrics import filter_warmup, percentile, summarize, summarize_groups
 
 
 def test_percentile():
@@ -56,3 +56,35 @@ def test_summarize_goodput_and_warmup():
     summary = summarize(events, warmup_s=5)
     assert summary["achieved_n"] == 1
     assert summary["slo_goodput_rps"] > 0
+
+
+def test_summarize_groups_by_tenant():
+    events = [
+        {
+            "arrival_ts": 1.0,
+            "finish_ts": 2.0,
+            "decision": "ADMIT",
+            "ttft_ms": 80,
+            "e2e_ms": 120,
+            "slo_met": True,
+            "bedrock_429": False,
+            "bedrock_5xx": False,
+            "tenant_id": "A",
+            "c_limit": 2,
+        },
+        {
+            "arrival_ts": 1.0,
+            "finish_ts": 2.0,
+            "decision": "REJECT",
+            "ttft_ms": None,
+            "e2e_ms": 0,
+            "slo_met": False,
+            "bedrock_429": False,
+            "bedrock_5xx": False,
+            "tenant_id": "B",
+            "c_limit": 2,
+        },
+    ]
+    by = summarize_groups(events, key="tenant_id")
+    assert by["A"]["slo_goodput_rps"] > 0
+    assert by["B"]["reject_n"] == 1

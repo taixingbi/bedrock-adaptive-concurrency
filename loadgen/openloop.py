@@ -148,6 +148,13 @@ async def run(args: argparse.Namespace) -> LoadStats:
     if getattr(args, "streams", None):
         parsed = [[phase_from_dict(p) for p in stream] for stream in args.streams if stream]
         duration = max((ph.until_s for stream in parsed for ph in stream), default=args.warmup_s + args.measure_s)
+        if args.mode == "closed_loop":
+            stream = parsed[0]
+            concurrency = args.concurrency or stream[0].concurrency or 1
+            await run_closed_loop(
+                url=url, concurrency=concurrency, duration_s=duration, phases=stream, stats=stats
+            )
+            return stats
         await asyncio.gather(
             *[
                 run_open_loop(url=url, duration_s=duration, phases=stream, stats=stats, poisson=poisson)

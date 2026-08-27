@@ -15,7 +15,7 @@ tenants:
   B:
     class: long
     c_max: 1
-    ttft_slo_ms: 3000
+    ttft_slo_ms: 769
 class_caps:
   short: 2
   long: 1

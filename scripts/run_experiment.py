@@ -423,6 +423,9 @@ def main() -> None:
             by_c.setdefault(int(row["c"]), []).append(row)
         points = []
         for c, rows in sorted(by_c.items()):
+            live = [r for r in rows if r.get("throughput_rps") is not None]
+            if not live:
+                continue
             points.append(
                 {
                     "c": c,

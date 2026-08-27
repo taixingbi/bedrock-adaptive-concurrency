@@ -1,0 +1,16 @@
+name: e1_long_scout
+experiment: E1
+mode: closed_loop
+policy: fixed
+# Cheap C=1 long characterization. Locks Tenant B / class-long TTFT SLO = 1.5 × P95.
+# Do not sweep C; short-class knee stays C*=1 from e1_pilot.
+workload:
+  prompt_class: long
+  input_tokens: 4096
+  max_tokens: 512
+  temperature: 0
+  streaming: true
+concurrency: [1]
+warmup_s: 30
+measure_s: 90
+repetitions: 1

@@ -85,13 +85,13 @@ Keep E1–E4 classes so new runs are comparable. Do not invent a third length fo
 | Class | Role | Input | Output | Stream | Temperature | SLO |
 |---|---|---|---|---|---|---|
 | `short` | interactive | ~512 | ~128 | yes | 0 | TTFT \(\le 576\) ms |
-| `long` | heavy / batch | ~4096 | ~512 | yes | 0 | TTFT \(\le\) \(\mathrm{SLO}_{long}\) (lock after a 1-rep \(C=1\) long scout; working default 3000 ms) |
+| `long` | heavy / batch | ~4096 | ~512 | yes | 0 | TTFT \(\le 769\) ms |
 
 Production can use per-class SLOs. Characterization E1 still uses **one** class (short) so \(C\) is not confounded with length.
 
 ## Derived parameters (from E1, not guessed)
 
-This account: \(C^*=1\) (best **observed** operating point on short, not “Bedrock knee must be 1”), \(R_{knee}\approx 1.84\) rps, interactive SLO \(= 576\) ms.
+This account: \(C^*=1\) (best **observed** operating point on short, not “Bedrock knee must be 1”), \(R_{knee}\approx 1.84\) rps, interactive SLO \(= 576\) ms, long SLO \(= 769\) ms (`results/e1_long_scout/`: \(C=1\) long P95 TTFT 513 ms \(\times 1.5\)). Long E2E P95 is ~2.9 s; the SLO is still TTFT.
 
 - Controller window = 5s, \(C \leftarrow C+1\) or \(C \leftarrow \max(C_{min}, 0.7C)\).
 - Demand gate: increase only if backend TTFT is healthy **and** the current \(C\) is pressed (waiters, or queue-wait P95 \(\ge 5\) ms).
@@ -180,7 +180,7 @@ Two tenants, one Bedrock backend.
 | Tenant | Class | Offer | SLO |
 |---|---|---|---|
 | A | short (interactive) | always on | TTFT 576 ms |
-| B | long (heavy) | burst, then off | \(\mathrm{SLO}_{long}\) |
+| B | long (heavy) | burst, then off | TTFT 769 ms |
 
 | Phase | Time | A | B |
 |---|---|---|---|

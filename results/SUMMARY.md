@@ -4,13 +4,14 @@ RQ1 campaign index (E1–E4). New paper E5/E6 (noisy-neighbor / mixed-class) are
 
 Design upgrade: [docs/experiment-design.md](../docs/experiment-design.md). Title is now multi-tenant + class-aware admission. Do not rerun E1–E4.
 
-Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
+Derived knobs (from `results/e1_pilot/` and `results/e1_long_scout/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms, **long TTFT SLO \(= 769\) ms**. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
 
 ## Canonical vs do-not-cite
 
 | Use | Dir | Why |
 |---|---|---|
 | E1 knobs | `e1_pilot/` | Cheap C=1,2,4,8 scout. Do not run `e1_sweep`. |
+| E1 long SLO | `e1_long_scout/` | C=1 long; SLO_long = 769 ms. |
 | E2 sanity | `e2_light_load/` | Demand-gated SLO-AIMD. |
 | E3 main | `e3_dynamic_load_v2/` | Backend-TTFT + demand gate, 5 reps. |
 | E4 novelty | `e4_token_shift_v2/` | Keep token-aware. RQ1. |
@@ -19,7 +20,7 @@ Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C^*=1\) (best obser
 | ignore | `e3_dynamic_load/` | Vacant \(C\approx 20\). Do **not** claim that run’s P95 cut. |
 | ignore | `e4_token_shift/` | Same vacant-\(C\) controller. |
 | retired | `e5_quota_pressure/` | Gateway \(C=1\) overload, not quota. Do not cite. New E5 is `e5_noisy_neighbor` (not run). |
-| not run | `e5_noisy_neighbor`, `e6_mixed_class` | RQ2/RQ3. Need nested admission first. |
+| not run | `e5_noisy_neighbor`, `e6_mixed_class` | RQ2/RQ3. Nested admission is in; Bedrock not run yet. |
 | ignore | `dryrun/`, `dryrun_tenants/`, `local/` | Mock / smoke. |
 
 ## E1 — knee (`e1_pilot/`, 1 rep, closed-loop)
@@ -32,6 +33,16 @@ Derived knobs (from `results/e1_pilot/`, do not re-guess): \(C^*=1\) (best obser
 | 8 | 1.25 | 0.81 | 8282 ms | 31 |
 
 **Claim:** Maverick has a concurrency knee at \(C=1\). Extra in-flight cuts goodput and blows the tail. Those 429s are runtime congestion, not the 800 RPM cliff (C=1 is ~110 RPM).
+
+### E1 long scout (`e1_long_scout/`, C=1, 1 rep)
+
+Same formula as short: SLO \(= 1.5 \times\) P95 TTFT. 35 measure requests, 0 Bedrock 429s.
+
+| | Throughput | TTFT P50 / P95 | E2E P95 | SLO |
+|---|---:|---:|---:|---:|
+| long \(C=1\) | 0.39 rps | 402 / 513 ms | 2894 ms | **769 ms** |
+
+TTFT only rises ~130 ms vs short. The long cost is occupancy / E2E (~2.9 s), not first-token. Do not use 3000 ms.
 
 ## E2 — light-load sanity (`e2_light_load/`, 5 reps, \(0.5 R_{knee}\))
 

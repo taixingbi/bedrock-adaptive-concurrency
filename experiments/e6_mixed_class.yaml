@@ -15,7 +15,7 @@ class_caps:
   long: 1
 slo:
   short: 576
-  long: 3000
+  long: 769
 policies:
   - {name: tenant_only, policy: tenant_admit, c: 2, caps: [global, tenant]}
   - {name: tenant_class, policy: tenant_admit, c: 2, caps: [global, tenant, class]}

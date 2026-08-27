@@ -50,7 +50,7 @@ Real Maverick on `short` (512/128) should look like: 1–2 OK requests in 1s, TT
 
 `scripts/run_experiment.py` starts and stops its own gateway. Stop any uvicorn on the same port first.
 
-RQ1 (E1–E4) is done — do not rerun. Nested tenant/class admission is implemented. Next: mock `dryrun_tenants`, then **new E5** / **new E6** on Bedrock. Retired: `e5_quota_pressure.yaml`. Old `results/e6_ablation/` is E7 traces, not the new E6.
+RQ1 (E1–E4) and RQ2/RQ3 (E5/E6) are done — do not rerun. Claims: `results/SUMMARY.md`. Retired: `e5_quota_pressure.yaml`. Old `results/e6_ablation/` is E7 traces, not the new E6.
 
 ```bash
 # cheap knee scout: C=1,2,4,8; 30s warmup + 60s measure; 1 rep
@@ -79,7 +79,7 @@ python scripts/run_experiment.py experiments/e4_token_shift.yaml --c-knee 1 --r-
 # nested admission mock
 python scripts/run_experiment.py experiments/dryrun_tenants.yaml --mock --reps 1 --port 8080
 
-# new E5 / E6 (Bedrock; 5 reps)
+# E5 / E6 (already on Bedrock; 5 reps)
 python scripts/run_experiment.py experiments/e5_noisy_neighbor.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 python scripts/run_experiment.py experiments/e6_mixed_class.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 ```

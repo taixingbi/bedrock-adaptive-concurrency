@@ -169,9 +169,9 @@ Token occupancy:
 W_t = \sum_{i \in \mathrm{inflight}} \bigl(\mathrm{inputTokens}_i + \lambda \cdot \widehat{\mathrm{outputTokens}}_i\bigr)
 \]
 
-## RQ2 / RQ3 — new E5 / E6
+## RQ2 / RQ3 — E5 / E6 (ran)
 
-Gateway nested limiter is implemented (`admit_caps` = global / tenant / class). Harness expands `e5_noisy_neighbor.yaml` and `e6_mixed_class.yaml`. Mock first: `experiments/dryrun_tenants.yaml`. Old `experiments/e5_quota_pressure.yaml` stays retired.
+Canonical traces: `results/e5_noisy_neighbor/` (6×5), `results/e6_mixed_class/` (3×5). Claims: `results/SUMMARY.md`. Old `experiments/e5_quota_pressure.yaml` stays retired.
 
 ### E5 — Multi-tenant noisy neighbor
 

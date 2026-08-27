@@ -1,8 +1,8 @@
 # Results claims (locked)
 
-RQ1 campaign index (E1–E4). New paper E5/E6 (noisy-neighbor / mixed-class) are **not run**. Per-request JSONL is the source of truth. Each `summary.json` is one row per cell×rep — it does not store means, medians, or phase splits.
+Campaign index for RQ1 (E1–E4) and RQ2/RQ3 (new E5/E6). Per-request JSONL is the source of truth. Each `summary.json` is one row per cell×rep — it does not store means, medians, or phase splits.
 
-Design upgrade: [docs/experiment-design.md](../docs/experiment-design.md). Title is now multi-tenant + class-aware admission. Do not rerun E1–E4.
+Design: [docs/experiment-design.md](../docs/experiment-design.md). Do not rerun E1–E4.
 
 Derived knobs (from `results/e1_pilot/` and `results/e1_long_scout/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms, **long TTFT SLO \(= 769\) ms**. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
 
@@ -19,8 +19,9 @@ Derived knobs (from `results/e1_pilot/` and `results/e1_long_scout/`, do not re-
 | ignore | `e2_static_vs_adaptive/`, `e2_pilot/` | Vacant-\(C\) climb under light load. |
 | ignore | `e3_dynamic_load/` | Vacant \(C\approx 20\). Do **not** claim that run’s P95 cut. |
 | ignore | `e4_token_shift/` | Same vacant-\(C\) controller. |
-| retired | `e5_quota_pressure/` | Gateway \(C=1\) overload, not quota. Do not cite. New E5 is `e5_noisy_neighbor` (not run). |
-| not run | `e5_noisy_neighbor`, `e6_mixed_class` | RQ2/RQ3. Nested admission is in; Bedrock not run yet. |
+| retired | `e5_quota_pressure/` | Gateway \(C=1\) overload, not quota. Do not cite. |
+| E5 noisy neighbor | `e5_noisy_neighbor/` | RQ2. 6 cells × 5 reps. |
+| E6 mixed class | `e6_mixed_class/` | RQ2/RQ3. 3 cells × 5 reps. |
 | ignore | `dryrun/`, `dryrun_tenants/`, `local/` | Mock / smoke. |
 
 ## E1 — knee (`e1_pilot/`, 1 rep, closed-loop)
@@ -96,7 +97,7 @@ Recovery after long→short (\(t\ge 300\)): first 3 consecutive 1 s windows with
 
 **Claim:** keep token-aware as core novelty. Win is **P3 recovery**, not P2 goodput: token pins \(C=1\) via `decrease-token` (\(W_t=4608\)), discards longs, then short recovers. SLO-AIMD raises \(C\) to 6–7 on long occupancy and poisons P3. Offered TPM is below the 600k quota — occupancy, not `TPM/quota`.
 
-## E6 — ablation (`e6_ablation/`, 3 reps, same workload as E4)
+## E7 — controller ablation (`e6_ablation/`, 3 reps, same workload as E4)
 
 YAML that ran: full, −token, −TTFT, −throttle, −MD. Spec wanted −demand-gate; **that cell was not run.**
 
@@ -110,12 +111,41 @@ YAML that ran: full, −token, −TTFT, −throttle, −MD. Spec wanted −deman
 
 **Claim:** token term is the ablation that matters. −TTFT shows TTFT still needed to avoid Bedrock 429s on short. Do not over-claim −MD or −throttle. Optional later cell: −demand-gate (E2 already showed vacant-\(C\) climb without it).
 
+## E5 — noisy neighbor (`e5_noisy_neighbor/`, 5 reps, 420 s)
+
+Two tenants, one backend. A = short @ \(0.5 R_{knee}\) always; B = long @ \(0.9 R_{knee}\) in P2 (120–300 s). Bedrock 429 = 0 all cells. Primary metrics \(G_A, G_B\), not aggregate goodput.
+
+| Policy | \(G_A\) | \(G_B\) | P95 TTFT | Aggregate goodput |
+|---|---:|---:|---:|---:|
+| Global Fixed | 0.518 | 0.011 | 2211 ms | 0.523 |
+| Global SLO-AIMD | 0.519 | 0.011 | 2194 ms | 0.523 |
+| Global Token | 0.518 | 0.011 | 2210 ms | 0.522 |
+| Tenant-only | **0.916** | **0.366** | **388 ms** | 1.075 |
+| Class-only | **0.914** | **0.364** | **386 ms** | 1.071 |
+| Tenant+class | **0.917** | **0.366** | **391 ms** | 1.075 |
+
+**Claim:** a shared global \(C\) lets the heavy tenant crush interactive SLO-goodput (\(G_A\) 0.52, P95 ~2.2 s). Nested caps restore \(G_A\approx 0.92\) and cut P95 to ~390 ms, and also raise \(G_B\) (0.37 vs 0.01) because B is no longer fighting an overloaded shared queue. Tenant-only ≈ class-only ≈ tenant+class on this workload because tenant identity **is** class (A=short, B=long). Do not claim nested extra from E5; that split is E6.
+
+## E6 — mixed class (`e6_mixed_class/`, 5 reps, 420 s)
+
+One tenant. P2 is 70% short / 30% long at \(0.9 R_{knee}\). Bedrock 429 = 0.
+
+| Policy | Short goodput | Long goodput | P95 TTFT | Aggregate |
+|---|---:|---:|---:|---:|
+| Tenant-only | 0.913 | 0.390 | 387 ms | 1.080 |
+| **Tenant+class** | **1.002** | 0.245 | 394 ms | 1.105 |
+| Global Token | 0.595 | 0.094 | 2029 ms | 0.635 |
+
+**Claim:** tenant isolation is not enough when one tenant mixes classes. Class cap trades some long goodput (0.39 → 0.25) for short (0.91 → 1.00). Global token-aware without class caps still loses (P95 2.0 s). Tenant isolation and workload isolation are different problems.
+
 ## Allowed paper claims
 
 1. Bedrock Llama 4 Maverick has a concurrency knee at \(C=1\) (E1).
 2. Best \(C\) moves with offered load; Fixed-1 collapses in the E3 burst.
 3. SLO-AIMD (+15.5% whole-run goodput vs Fixed) by raising \(C\) only under demand + healthy backend TTFT.
-4. Token demand changes the right \(C\) at constant RPS; token-aware recovers after long→short where request-count AIMD does not (E4, E6 −token).
+4. Token demand changes the right \(C\) at constant RPS; token-aware recovers after long→short where request-count AIMD does not (E4, E7 −token).
+5. Multi-tenant sharing on an opaque backend is a noisy-neighbor problem; nested caps protect interactive \(G_A\) (E5).
+6. Tenant isolation ≠ class isolation; same-tenant short/long mix still needs a class cap (E6).
 
 ## Traps
 
@@ -126,6 +156,8 @@ YAML that ran: full, −token, −TTFT, −throttle, −MD. Spec wanted −deman
 - Retired quota E5 does not support a quota-cliff claim.
 - `results/e6_ablation/` did not ablate the demand gate. −MD is not identified at this \(C\). It is E7 traces, not the new mixed-class E6.
 - E4 / old ablation P2 token-aware goodput is ~0 by design (reject longs). The metric that matters is P3.
+- E5 tenant-only ≈ tenant+class because A=short and B=long. Do not sell nested extra from E5.
+- E6 primary split is short vs long goodput, not aggregate.
 
 ## Recompute
 
@@ -144,4 +176,4 @@ for cell, rs in by.items():
 PY
 ```
 
-Phase splits: bucket `events.jsonl` by `arrival_ts - min(arrival_ts)` using the YAML `until_s` edges (E3: 120/240/300/420; E4/E6: 180/300/480).
+Phase splits: bucket `events.jsonl` by `arrival_ts - min(arrival_ts)` using the YAML `until_s` edges (E3: 120/240/300/420; E4/E7: 180/300/480; E5/E6: 120/300/420). Per-tenant / per-class: `summary["by_tenant"]` / `by_class`.

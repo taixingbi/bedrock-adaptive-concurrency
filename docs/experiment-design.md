@@ -13,10 +13,10 @@ Do **not** adjust RPM/TPM quota. Quota is static context only. Do **not** rerun 
 E1–E4. Fixed \(C\) is load-dependent; demand-gated AIMD helps under bursts; request-count \(C\) fails when token size shifts at constant RPS.
 
 **RQ2 — How do tenant and class interference show up on a managed LLM gateway?**  
-New E5 (noisy neighbor) and new E6 (same tenant, mixed classes). Tenant isolation and workload-class isolation are different problems.
+E5: same-class noisy neighbor (tenant layer). E6: same-tenant mixed class (class layer). E7: both at once (hierarchy is complementary).
 
 **RQ3 — Can tenant- and class-aware admission protect interactive SLOs with only gateway-visible signals?**  
-Nested budgets \(C_{global}\), \(C_t\), \(C_{t,c}\). No RL, no WFQ in v1.
+Token-aware global \(C_g(t)\) decides how much backend capacity is safe. Static nested budgets decide who may consume it. No RL, no WFQ in v1.
 
 ## Architecture
 
@@ -34,23 +34,28 @@ Amazon Bedrock (direct ConverseStream)
 Llama 4 Maverick
 ```
 
-Contribution (new E5/E6):
+Contribution (E5–E7):
 
 ```
-             Gateway
-                ↓
-        tenant admission
-          ↙           ↘
-      Tenant A      Tenant B
-          ↓            ↓
-       short         long
-          ↓            ↓
-       C_A(t)        C_B(t)
-          ↘            ↙
-          global budget
-                ↓
-             Bedrock
+Token-aware global controller
+          │
+          │  determines backend-safe capacity
+          ↓
+        Cg(t)
+          │
+     ┌────┴────┐
+     │         │
+ Tenant A    Tenant B
+   Ct=A        Ct=B
+     │
+ ┌───┴────┐
+short    long
+C_{t,short}  C_{t,long}
+          ↘    ↙
+        Bedrock
 ```
+
+**Core sentence:** the global controller decides how much capacity is safe; hierarchical admission decides who is allowed to consume it.
 
 The paper gateway calls Bedrock directly. It does **not** proxy through `bedrock-inference-mvp`. Putting Lambda on the path would mix Lambda concurrency into \(C_{knee}\).
 
@@ -80,7 +85,7 @@ E1–E4 stay well below the RPM cliff. Retired quota-pressure E5 (`results/e5_qu
 
 ## Workloads / classes
 
-Keep E1–E4 classes so new runs are comparable. Do not invent a third length for E5/E6.
+Keep E1–E4 classes so new runs are comparable. Do not invent a third length for E5–E7.
 
 | Class | Role | Input | Output | Stream | Temperature | SLO |
 |---|---|---|---|---|---|---|
@@ -97,36 +102,50 @@ This account: \(C^*=1\) (best **observed** operating point on short, not “Bedr
 - Demand gate: increase only if backend TTFT is healthy **and** the current \(C\) is pressed (waiters, or queue-wait P95 \(\ge 5\) ms).
 - Control uses **backend** TTFT. User-facing TTFT remains the goodput SLO.
 
-Isolation budgets for E5/E6 are derived from \(C^*\), not from a generic \(C_{global}=4\):
+Isolation budgets for E5–E7 are derived from \(C^*\), not from a generic \(C_{global}=4\). v1 keeps tenant/class caps **static**; only \(C_g(t)\) is token-aware adaptive.
 
 \[
-C_{global} = 2,\quad C_A^{\max}=2,\quad C_B^{\max}=1,\quad C_{short}^{\max}=2,\quad C_{long}^{\max}=1
+C_g^{\max}=2,\quad C_A=2,\quad C_B=1
 \]
 
-Two slots is the smallest split that can isolate a noisy neighbor when \(C^*=1\). \(C_{global}=4\) would overshoot this backend.
+Per-(tenant, class) for the hierarchical policy (E7 example):
+
+\[
+C_{A,\mathrm{short}}=2,\; C_{A,\mathrm{long}}=1,\quad C_{B,\mathrm{short}}=1,\; C_{B,\mathrm{long}}=1
+\]
+
+Class-only uses a **global** class pool \(C_{\mathrm{short}}=2,\; C_{\mathrm{long}}=1\) so it cannot see tenants. Two slots is the smallest split that can isolate a noisy neighbor when \(C^*=1\). \(C_{global}=4\) would overshoot this backend.
 
 ## Admission (v1, no RL)
 
-Admit iff all that apply for the selected policy:
+Global capacity from E4:
 
 \[
-\mathrm{inflight}_{global} < C_{global}
-\quad\land\quad
-\mathrm{inflight}_{t} < C_{t}
-\quad\land\quad
-\mathrm{inflight}_{t,c} < C_{t,c}
+C_g(t) = \mathrm{TokenAwareController}
 \]
 
-Reject does not count as goodput. Policies below enable a subset of these caps. Global AIMD still adapts \(C_{global}(t)\) inside \([C_{min}, C_{max}]\) when the policy is adaptive; tenant/class caps stay static in v1.
+Static isolation budgets \(C_t\) and \(C_{t,c}\). Admit iff all enabled layers pass:
 
-| Policy | Caps |
-|---|---|
-| Global Fixed | \(C_{global}=2\) |
-| Global Request-AIMD | demand-gated SLO-AIMD on \(C_{global}\) |
-| Global Token-Aware | token SLO-AIMD on \(C_{global}\) |
-| Tenant-only | \(C_{global}\) + \(C_A,C_B\) |
-| Class-aware | \(C_{global}\) + \(C_{short},C_{long}\) |
-| Tenant + class | all three nested |
+\[
+\mathrm{admit}(i)
+=
+[I_g < C_g(t)]
+\;\land\;
+[I_t < C_t]
+\;\land\;
+[I_{t,c} < C_{t,c}]
+\]
+
+Counters: `inflight_global`, `inflight[tenant]`, `inflight[(tenant, class)]`. Class-only is the exception: it uses a shared `inflight[class]` so it cannot distinguish tenants (E5 negative control). Reject does not count as goodput.
+
+E5–E7 policies all use **token-aware** \(C_g(t)\) inside \([C_{\min}, C_g^{\max}]\). They differ only in which isolation layers are on.
+
+| Policy | \(C_g(t)\) token-aware | Tenant cap | Class cap |
+|---|---|---|---|
+| Global Token | yes | — | — |
+| Class-only Token | yes | — | global class pool |
+| Tenant-only Token | yes | \(C_t\) | — |
+| Hierarchical Token | yes | \(C_t\) | \(C_{t,c}\) |
 
 ## RQ1 — E1–E4 (done, do not rerun)
 
@@ -169,61 +188,76 @@ Token occupancy:
 W_t = \sum_{i \in \mathrm{inflight}} \bigl(\mathrm{inputTokens}_i + \lambda \cdot \widehat{\mathrm{outputTokens}}_i\bigr)
 \]
 
-## RQ2 / RQ3 — E5 / E6 (ran)
+## RQ2 / RQ3 — E5 / E6 / E7 (ran)
 
-Canonical traces: `results/e5_noisy_neighbor/` (6×5), `results/e6_mixed_class/` (3×5). Claims: `results/SUMMARY.md`. Old `experiments/e5_quota_pressure.yaml` stays retired.
+Do **not** cite `results/e5_noisy_neighbor/` or `results/e6_mixed_class/` from the first nested-admission campaign: those bound Tenant A=short to Tenant B=long, and isolation cells used static `tenant_admit` rather than token-aware \(C_g(t)\). New result dirs: `e5_tenant_isolation/`, `e6_class_isolation/`, `e7_joint_interference/`. Old `experiments/e5_quota_pressure.yaml` stays retired.
 
-### E5 — Multi-tenant noisy neighbor
+Each E5–E7 experiment changes **one** interference dimension. Policies on a rep share a seeded arrival trace. Policy order is interleaved across reps (latin-style `policy_schedules` in the YAML) so opaque Bedrock drift is not aliased to one cell.
 
-Two tenants, one Bedrock backend.
+### E5 — Tenant noisy-neighbor isolation
+
+Both tenants are **short**. Class-only cannot see A vs B.
 
 | Tenant | Class | Offer | SLO |
 |---|---|---|---|
-| A | short (interactive) | always on | TTFT 576 ms |
-| B | long (heavy) | burst, then off | TTFT 769 ms |
+| A | short | always on \(0.5 R_{\mathrm{ref}}\) | TTFT 576 ms |
+| B | short | burst, then off | TTFT 576 ms |
 
 | Phase | Time | A | B |
 |---|---|---|---|
-| P1 | 0–120s | \(0.5 R_{knee}\) short | 0 |
-| P2 | 120–300s | \(0.5 R_{knee}\) short | \(0.9 R_{knee}\) long |
-| P3 | 300–420s | \(0.5 R_{knee}\) short | 0 |
+| P1 | 0–120s | \(0.5 R_{\mathrm{ref}}\) short | 0 |
+| P2 | 120–300s | \(0.5 R_{\mathrm{ref}}\) short | \(0.9 R_{\mathrm{ref}}\) short |
+| P3 | 300–420s | \(0.5 R_{\mathrm{ref}}\) short | 0 |
 
-Policies: Global Fixed, Global Request-AIMD, Global Token-Aware, Tenant-only, Class-aware, Tenant+class. 5 reps.
+If P2 interference is too weak, add a \(1.2 R_{\mathrm{ref}}\) sensitivity. Policies: Global Token, Class-only Token, Tenant-only Token, Hierarchical Token. 5 reps.
 
-**Primary metrics — not aggregate goodput alone:**
+**Expected:** Global Token bad for A; Class-only \(\approx\) Global; Tenant-only protects A; Hierarchical \(\approx\) Tenant-only. That is: **tenant layer is necessary**.
 
-\[
-G_A,\ G_B
-\]
+**Primary metric:** \(G_A^{\mathrm{short}}\). Also A short SLO attainment, A P95 TTFT, B completion rate, reject(A)/reject(B), recovery after B leaves, total goodput, Bedrock 429. Do not rank on aggregate goodput.
 
-plus A P95 TTFT, B completion rate, reject rate by tenant/class, global goodput, fairness (\(G_A\) vs \(G_B\)), A recovery time after B stops, Bedrock 429.
+### E6 — Class isolation (same tenant)
 
-Pass for Tenant+class: during P2, \(G_A\) stays near P1; Global Fixed / Request-AIMD let B crush A.
-
-### E6 — Same tenant, mixed classes
-
-One tenant. Mix short+long so a reviewer cannot say “tenant isolation was enough.”
+One tenant. Tenant-only cannot split short vs long.
 
 | Phase | Time | Mix |
 |---|---|---|
-| P1 | 0–120s | short only, \(0.5 R_{knee}\) |
-| P2 | 120–300s | 70% short / 30% long, total \(0.9 R_{knee}\) |
-| P3 | 300–420s | short only, \(0.5 R_{knee}\) |
+| P1 | 0–120s | 100% short, \(0.5 R_{\mathrm{ref}}\) |
+| P2 | 120–300s | 70% short / 30% long, \(0.9 R_{\mathrm{ref}}\) |
+| P3 | 300–420s | 100% short, \(0.5 R_{\mathrm{ref}}\) |
 
-Policies: Tenant-only vs Tenant+class (Global Token-Aware as a third cell if budget allows). 5 reps.
+Policies: Global Token, Tenant-only Token, Class-only Token, Hierarchical Token. 5 reps.
 
-If tenant-only still lets long drag short, and class-aware restores short \(G\) / P95, then tenant isolation and workload isolation are distinct.
+**Expected:** Tenant-only \(\approx\) Global Token; Class-only and Hierarchical protect short. That is: **class layer is necessary**. Tenant isolation does not solve same-tenant class interference.
+
+**Primary metric:** \(G_{\mathrm{short}}\). Also short P95 TTFT, long completion rate, reject by class, recovery, total goodput, Bedrock 429.
+
+### E7 — Joint interference (closing experiment)
+
+Two tenants, each mixed. This is where tenant \(\times\) class happen together.
+
+| Phase | A | B |
+|---|---|---|
+| P1 0–120s | \(0.5 R_{\mathrm{ref}}\), 100% short | 0 |
+| P2 120–300s | \(0.5 R_{\mathrm{ref}}\), 80% short / 20% long | \(0.7 R_{\mathrm{ref}}\), 50/50 |
+| P3 300–420s | \(0.5 R_{\mathrm{ref}}\), 100% short | 0 |
+
+Policies: Tenant-only Token, Class-only Token, Hierarchical Token. Start with 3 reps; extend to 5 if the gap is clean.
+
+**Expected:** \(G_A^{\mathrm{short}}\) satisfies Hierarchical \(>\) Tenant-only and Hierarchical \(>\) Class-only. Watch \(G_B\) so the win is not “protect A by refusing all of B.” That is: **tenant and class controls are complementary**.
+
+**Primary metric:** \(G_{A,\mathrm{short}}\), plus \(G_B\), rejects by tenant/class, Bedrock 429.
 
 ## Retired / relocated
 
 | Old | Status |
 |---|---|
 | Quota-pressure E5 | Out. `results/e5_quota_pressure/` do not cite. |
-| Controller ablation (`results/e6_ablation/`) | Relabeled **E7 traces**. Token / TTFT ablations still support RQ1. Not the new paper E6. Optional rerun later (−demand-gate, 5 reps). |
+| Controller ablation (`results/e6_ablation/`) | RQ1 appendix. Token / TTFT ablations. **Not** paper E7. Optional later (−demand-gate, 5 reps). |
+| First nested E5/E6 (`e5_noisy_neighbor/`, `e6_mixed_class/`) | Do not cite. A=short/B=long confound; isolation used static `tenant_admit`. |
 
 ## Metrics
 
-Gateway `/metrics` (existing) plus E5/E6 labels `tenant`, `class`:
+Gateway `/metrics` (existing) plus E5–E7 labels `tenant`, `class`:
 
 - `llm_offered_rps`, `llm_achieved_rps`, `llm_slo_goodput_rps` (also per tenant/class)
 - `llm_inflight_requests`, `llm_concurrency_limit`, `llm_queue_depth`
@@ -231,7 +265,7 @@ Gateway `/metrics` (existing) plus E5/E6 labels `tenant`, `class`:
 - `llm_throttle_total`, `llm_error_total`
 - `bedrock_rpm_quota`, `bedrock_tpm_quota`, `bedrock_tpd_quota` (static, never control)
 
-Per-request JSONL is the source of truth. New required fields: `tenant_id`, `class`, `slo_ms` (per-class), `slo_met`, `c_global`, `c_tenant`, `c_class`.
+Per-request JSONL is the source of truth. Required fields: `tenant_id`, `class`, `slo_ms` (per-class), `slo_met`, `c_global`, `c_tenant`, `c_class`, `c_tenant_class`. Summaries expose `by_tenant`, `by_class`, `by_tenant_class`, `reject_by_reason`.
 
 Paper figures: 5–10 s rolling windows. Do not plot raw 1 s `achieved_rps`.
 
@@ -240,5 +274,6 @@ Paper figures: 5–10 s rolling windows. Do not plot raw 1 s `achieved_rps`.
 1. Global usable \(C\) is workload-dependent (E1+E2).
 2. Adaptive global \(C\) helps under demand bursts (E3).
 3. Request-count \(C\) fails under token-size shifts (E4).
-4. Multi-tenant sharing creates noisy-neighbor interference on an opaque backend (new E5).
-5. Tenant isolation ≠ class isolation; nested admission protects interactive SLOs without GPU telemetry (new E5+E6).
+4. Same-class multi-tenant sharing needs a tenant layer (E5).
+5. Same-tenant mixed class needs a class layer (E6).
+6. Tenant and class controls are complementary under joint interference (E7).

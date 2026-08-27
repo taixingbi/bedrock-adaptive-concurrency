@@ -1,5 +1,7 @@
+import json
+
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -42,7 +44,18 @@ class Settings(BaseSettings):
     admit_caps: str = "global"
     tenant_caps: dict[str, int] = Field(default_factory=dict)
     class_caps: dict[str, int] = Field(default_factory=dict)
+    tenant_class_caps: dict[str, dict[str, int]] = Field(default_factory=dict)
     class_slo_ms: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("tenant_caps", "class_caps", "class_slo_ms", "tenant_class_caps", mode="before")
+    @classmethod
+    def _parse_json_dict(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return {}
+            return json.loads(value)
+        return value
 
     @property
     def w_short(self) -> float:
@@ -58,7 +71,13 @@ class Settings(BaseSettings):
 
     @property
     def use_class_cap(self) -> bool:
-        return "class" in self.admit_cap_set
+        """Global class pool. Used only when class is on and tenant is off."""
+        return "class" in self.admit_cap_set and "tenant" not in self.admit_cap_set
+
+    @property
+    def use_tenant_class_cap(self) -> bool:
+        """Per-(tenant, class) cap. Hierarchical policy enables both layers."""
+        return "class" in self.admit_cap_set and "tenant" in self.admit_cap_set
 
     def slo_ms_for(self, prompt_class: str) -> float:
         if prompt_class in self.class_slo_ms:

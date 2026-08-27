@@ -1,31 +1,38 @@
-name: e5_noisy_neighbor
+name: e5_tenant_isolation
 experiment: E5_noisy
 mode: open_loop
 warmup_s: 0
 measure_s: 420
 repetitions: 5
+interleave: true
+replay_traces: true
 queue_max: 16
 queue_timeout_s: 2.0
 c_global: 2
+# Both tenants are short. Class-only cannot see A vs B (negative control).
 tenants:
   A:
-    class: short
     c_max: 2
-    ttft_slo_ms: 576
+    classes: {short: 2}
   B:
-    class: long
     c_max: 1
-    ttft_slo_ms: 769
+    classes: {short: 1}
 class_caps:
   short: 2
   long: 1
+slo:
+  short: 576
+  long: 769
 policies:
-  - {name: global_fixed, policy: fixed, c: 2, caps: [global]}
-  - {name: global_slo_aimd, policy: slo_aimd, c: 2, caps: [global]}
   - {name: global_token, policy: token_slo_aimd, c: 2, caps: [global]}
-  - {name: tenant_only, policy: tenant_admit, c: 2, caps: [global, tenant]}
-  - {name: class_only, policy: tenant_admit, c: 2, caps: [global, class]}
-  - {name: tenant_class, policy: tenant_admit, c: 2, caps: [global, tenant, class]}
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+  - {name: hierarchical, policy: token_slo_aimd, c: 2, caps: [global, tenant, class]}
+policy_schedules:
+  - [global_token, tenant_only, class_only, hierarchical]
+  - [class_only, hierarchical, global_token, tenant_only]
+  - [tenant_only, global_token, hierarchical, class_only]
+  - [hierarchical, class_only, tenant_only, global_token]
 phases:
   - until_s: 120
     tenants:
@@ -34,7 +41,7 @@ phases:
   - until_s: 300
     tenants:
       A: {rps_frac: 0.5, prompt_class: short}
-      B: {rps_frac: 0.9, prompt_class: long}
+      B: {rps_frac: 0.9, prompt_class: short}
   - until_s: 420
     tenants:
       A: {rps_frac: 0.5, prompt_class: short}

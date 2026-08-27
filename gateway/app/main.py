@@ -45,8 +45,10 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
         settings.queue_max,
         tenant_caps=settings.tenant_caps,
         class_caps=settings.class_caps,
+        tenant_class_caps=settings.tenant_class_caps,
         use_tenant_cap=settings.use_tenant_cap,
         use_class_cap=settings.use_class_cap,
+        use_tenant_class_cap=settings.use_tenant_class_cap,
     )
     controller = build_controller(settings)
     window = ObservationWindow()
@@ -91,6 +93,7 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
             "admit_caps": settings.admit_caps,
             "tenant_inflight": limiter.tenant_inflight,
             "class_inflight": limiter.class_inflight,
+            "tenant_class_inflight": limiter.tenant_class_inflight,
             "last_action": controller.last_action,
             "model_id": settings.model_id,
         }
@@ -243,7 +246,8 @@ async def _handle_infer(app: FastAPI, payload: dict[str, Any], request: Request)
         "c_limit": limiter.limit,
         "c_global": limiter.limit,
         "c_tenant": limiter.tenant_limit(tenant_id),
-        "c_class": limiter.class_limit(prompt_class),
+        "c_class": limiter.effective_class_limit(tenant_id, prompt_class),
+        "c_tenant_class": limiter.tenant_class_limit(tenant_id, prompt_class),
         "inflight": limiter.inflight,
         "w_t": limiter.w_t,
         "weight": weight,
@@ -317,7 +321,8 @@ def _reject_event(
         "c_limit": limiter.limit,
         "c_global": limiter.limit,
         "c_tenant": limiter.tenant_limit(tenant_id),
-        "c_class": limiter.class_limit(prompt_class),
+        "c_class": limiter.effective_class_limit(tenant_id, prompt_class),
+        "c_tenant_class": limiter.tenant_class_limit(tenant_id, prompt_class),
         "inflight": limiter.inflight,
         "w_t": limiter.w_t,
         "weight": weight,
@@ -414,6 +419,7 @@ async def _timeseries_loop(app: FastAPI) -> None:
                 "last_action": app.state.controller.last_action,
                 "tenant_inflight": limiter.tenant_inflight,
                 "class_inflight": limiter.class_inflight,
+                "tenant_class_inflight": limiter.tenant_class_inflight,
             }
         )
 

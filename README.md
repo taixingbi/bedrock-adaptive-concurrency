@@ -2,10 +2,10 @@
 
 Multi-tenant and class-aware admission control for opaque managed LLM APIs (Amazon Bedrock). Gateway-visible signals only — no GPU / KV-cache telemetry. Nested budgets \(C_{global}\), \(C_t\), \(C_{t,c}\); quota is static context, not the control law.
 
-Locked design: [docs/experiment-design.md](docs/experiment-design.md). RQ1 claims (E1–E4): [results/SUMMARY.md](results/SUMMARY.md).
+Locked design: [docs/experiment-design.md](docs/experiment-design.md). Claims: [results/SUMMARY.md](results/SUMMARY.md).
 
 ```
-Open-loop loadgen → LLM gateway → tenant/class admission + adaptive C → Bedrock ConverseStream → Llama 4 Maverick
+Open-loop loadgen → LLM gateway → token-aware \(C_g(t)\) + nested tenant/class admission → Bedrock ConverseStream → Llama 4 Maverick
 ```
 
 Model: `us.meta.llama4-maverick-17b-instruct-v1:0` (US geo, `us-east-1`). Call Bedrock directly. Do not put `bedrock-inference-mvp` (Lambda Function URL) on this path.
@@ -50,7 +50,7 @@ Real Maverick on `short` (512/128) should look like: 1–2 OK requests in 1s, TT
 
 `scripts/run_experiment.py` starts and stops its own gateway. Stop any uvicorn on the same port first.
 
-RQ1 (E1–E4) and RQ2/RQ3 (E5/E6) are done — do not rerun. Claims: `results/SUMMARY.md`. Retired: `e5_quota_pressure.yaml`. Old `results/e6_ablation/` is E7 traces, not the new E6.
+RQ1 (E1–E4) and RQ2/RQ3 (E5–E7) are done — do not rerun. Claims: `results/SUMMARY.md`. Do not cite v1 `results/e5_noisy_neighbor/` or `e6_mixed_class/`. Retired: `e5_quota_pressure.yaml`. `results/e6_ablation/` is an RQ1 appendix, not paper E7.
 
 ```bash
 # cheap knee scout: C=1,2,4,8; 30s warmup + 60s measure; 1 rep
@@ -78,10 +78,12 @@ python scripts/run_experiment.py experiments/e4_token_shift.yaml --c-knee 1 --r-
 
 # nested admission mock
 python scripts/run_experiment.py experiments/dryrun_tenants.yaml --mock --reps 1 --port 8080
+python scripts/run_experiment.py experiments/dryrun_joint.yaml --mock --reps 1 --port 8080
 
-# E5 / E6 (already on Bedrock; 5 reps)
+# E5–E7 (Bedrock; interleaved policies; 5 / 5 / 3 reps)
 python scripts/run_experiment.py experiments/e5_noisy_neighbor.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 python scripts/run_experiment.py experiments/e6_mixed_class.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+python scripts/run_experiment.py experiments/e7_joint_interference.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 ```
 
 Optional PNGs: add `--plot`. Local harness check: `python scripts/run_experiment.py experiments/dryrun.yaml --mock --reps 1 --port 8080`.
@@ -97,7 +99,7 @@ python -m loadgen.openloop --url http://127.0.0.1:8080 --mode closed_loop --conc
 
 
 
-Open-loop RPS (E2–E4, later E5/E6):
+Open-loop RPS (E2–E7):
 
 ```bash
 python -m loadgen.openloop --url http://127.0.0.1:8080 --mode open_loop --rps 4 --measure-s 180 --prompt-class short
@@ -122,8 +124,8 @@ Gauges `bedrock_rpm_quota`, `bedrock_tpm_quota`, and `bedrock_tpd_quota` are exp
 | `retry_backoff` | High static \(C\) + exponential backoff on 429/5xx |
 | `gradient` | Adapt \(C\) from TTFT P95 trend |
 | `slo_aimd` | \(C+1\) / \(0.7C\) from TTFT P95 and throttle |
-| `token_slo_aimd` | SLO-AIMD plus inflight token pressure \(W_t\) |
-| `tenant_admit` | Nested caps \(C_{global}\), \(C_t\), \(C_{t,c}\) (E5/E6) |
+| `token_slo_aimd` | SLO-AIMD plus inflight token pressure \(W_t\); E5–E7 global \(C_g(t)\) |
+| `tenant_admit` | Static global \(C\) plus nested caps (tests / legacy; not E5–E7) |
 
 ## Tests
 

@@ -105,3 +105,76 @@ def test_class_cap_rejects_long_but_admits_short():
         await limiter.release(1, prompt_class="short")
 
     asyncio.run(_run())
+
+
+def test_class_only_cannot_isolate_same_class_tenants():
+    """E5 negative control: both tenants short, global class pool cannot see A vs B."""
+
+    async def _run():
+        limiter = ConcurrencyLimiter(
+            limit=2,
+            queue_max=0,
+            class_caps={"short": 2},
+            use_class_cap=True,
+        )
+        b1 = await limiter.acquire(1, tenant="B", prompt_class="short")
+        b2 = await limiter.acquire(1, tenant="B", prompt_class="short")
+        assert b1.ok and b2.ok
+        a = await limiter.acquire(1, tenant="A", prompt_class="short")
+        assert not a.ok
+        assert a.reason in {"class_full", "queue_full"}
+        await limiter.release(1, tenant="B", prompt_class="short")
+        await limiter.release(1, tenant="B", prompt_class="short")
+
+    asyncio.run(_run())
+
+
+def test_tenant_cap_protects_interactive_from_noisy_neighbor():
+    async def _run():
+        limiter = ConcurrencyLimiter(
+            limit=2,
+            queue_max=0,
+            tenant_caps={"A": 2, "B": 1},
+            use_tenant_cap=True,
+        )
+        b1 = await limiter.acquire(1, tenant="B", prompt_class="short")
+        b2 = await limiter.acquire(1, tenant="B", prompt_class="short")
+        assert b1.ok
+        assert not b2.ok
+        assert b2.reason == "tenant_full"
+        a = await limiter.acquire(1, tenant="A", prompt_class="short")
+        assert a.ok
+        await limiter.release(1, tenant="B", prompt_class="short")
+        await limiter.release(1, tenant="A", prompt_class="short")
+
+    asyncio.run(_run())
+
+
+def test_hierarchical_caps_pair_not_global_class():
+    """A long must not consume B's class budget; inflight is (tenant, class)."""
+
+    async def _run():
+        limiter = ConcurrencyLimiter(
+            limit=2,
+            queue_max=0,
+            tenant_caps={"A": 2, "B": 1},
+            tenant_class_caps={"A": {"short": 2, "long": 1}, "B": {"short": 1, "long": 1}},
+            use_tenant_cap=True,
+            use_tenant_class_cap=True,
+        )
+        a_long = await limiter.acquire(1, tenant="A", prompt_class="long")
+        a_long2 = await limiter.acquire(1, tenant="A", prompt_class="long")
+        assert a_long.ok
+        assert not a_long2.ok
+        assert a_long2.reason == "tenant_class_full"
+        a_short = await limiter.acquire(1, tenant="A", prompt_class="short")
+        b_short = await limiter.acquire(1, tenant="B", prompt_class="short")
+        assert a_short.ok
+        assert not b_short.ok  # global C=2 already full (A long + A short)
+        await limiter.release(1, tenant="A", prompt_class="long")
+        b_short = await limiter.acquire(1, tenant="B", prompt_class="short")
+        assert b_short.ok
+        await limiter.release(1, tenant="A", prompt_class="short")
+        await limiter.release(1, tenant="B", prompt_class="short")
+
+    asyncio.run(_run())

@@ -88,3 +88,40 @@ def test_summarize_groups_by_tenant():
     by = summarize_groups(events, key="tenant_id")
     assert by["A"]["slo_goodput_rps"] > 0
     assert by["B"]["reject_n"] == 1
+
+
+def test_summarize_tenant_class_and_reject_reason():
+    events = [
+        {
+            "arrival_ts": 1.0,
+            "finish_ts": 2.0,
+            "decision": "ADMIT",
+            "ttft_ms": 80,
+            "e2e_ms": 120,
+            "slo_met": True,
+            "bedrock_429": False,
+            "bedrock_5xx": False,
+            "tenant_id": "A",
+            "prompt_class": "short",
+            "c_limit": 2,
+        },
+        {
+            "arrival_ts": 1.0,
+            "finish_ts": 2.0,
+            "decision": "REJECT",
+            "reason": "tenant_class_full",
+            "ttft_ms": None,
+            "e2e_ms": 0,
+            "slo_met": False,
+            "bedrock_429": False,
+            "bedrock_5xx": False,
+            "tenant_id": "A",
+            "prompt_class": "long",
+            "c_limit": 2,
+        },
+    ]
+    from analysis.metrics import tenant_class_key
+
+    by = summarize_groups(events, key_fn=tenant_class_key)
+    assert by["A:short"]["slo_goodput_rps"] > 0
+    assert by["A:long"]["reject_by_reason"]["tenant_class_full"] == 1

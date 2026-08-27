@@ -1,4 +1,4 @@
-from loadgen.openloop import Phase, phase_at, pick_prompt_class
+from loadgen.openloop import Phase, build_schedule, phase_at, pick_prompt_class
 
 
 def test_phase_at():
@@ -44,3 +44,17 @@ def test_closed_loop_streams_do_not_use_open_loop():
         asyncio.run(run(args))
         closed.assert_awaited()
         opened.assert_not_called()
+
+
+def test_build_schedule_replays_the_same_mix():
+    import random
+
+    phases = [
+        Phase(until_s=1.0, rps=0.0, tenant_id="A"),
+        Phase(until_s=3.0, rps=2.0, mix={"short": 0.5, "long": 0.5}, tenant_id="A"),
+    ]
+    a = build_schedule(phases, 3.0, random.Random(7))
+    b = build_schedule(phases, 3.0, random.Random(7))
+    assert [cls.prompt_class for _, cls in a] == [cls.prompt_class for _, cls in b]
+    assert a[0][0] >= 1.0
+    assert all(p.mix is None for _, p in a)

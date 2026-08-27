@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def load_events(path: Path) -> list[dict[str, Any]]:
@@ -56,11 +57,15 @@ def summarize(events: list[dict[str, Any]], *, warmup_s: float = 0.0) -> dict[st
     ttfts = [float(e["ttft_ms"]) for e in achieved if e.get("ttft_ms") is not None]
     e2e = [float(e["e2e_ms"]) for e in achieved if e.get("e2e_ms") is not None]
     slo_n = sum(1 for e in achieved if e.get("slo_met"))
+    rejects = [e for e in rows if e.get("decision") == "REJECT"]
+    reject_reasons = dict(Counter(str(e.get("reason") or "unknown") for e in rejects))
     return {
         "requests": n,
         "duration_s": duration,
         "admit_n": len(admitted),
-        "reject_n": sum(1 for e in rows if e.get("decision") == "REJECT"),
+        "reject_n": len(rejects),
+        "reject_by_reason": reject_reasons,
+        "completion_rate": len(achieved) / n,
         "achieved_n": len(achieved),
         "throughput_rps": len(achieved) / duration,
         "slo_goodput_rps": slo_n / duration,
@@ -83,10 +88,24 @@ def summarize(events: list[dict[str, Any]], *, warmup_s: float = 0.0) -> dict[st
     }
 
 
-def summarize_groups(events: list[dict[str, Any]], *, key: str, warmup_s: float = 0.0) -> dict[str, Any]:
+def tenant_class_key(event: dict[str, Any]) -> str:
+    return f"{event.get('tenant_id') or 'default'}:{event.get('prompt_class') or 'short'}"
+
+
+def summarize_groups(
+    events: list[dict[str, Any]],
+    *,
+    key: str | None = None,
+    key_fn: Callable[[dict[str, Any]], str] | None = None,
+    warmup_s: float = 0.0,
+) -> dict[str, Any]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for event in filter_warmup(events, warmup_s):
-        grouped.setdefault(str(event.get(key) or "default"), []).append(event)
+        if key_fn is not None:
+            name = key_fn(event)
+        else:
+            name = str(event.get(key) or "default")
+        grouped.setdefault(name, []).append(event)
     return {name: summarize(rows) for name, rows in grouped.items()}
 
 

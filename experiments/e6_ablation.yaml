@@ -1,6 +1,7 @@
 name: e6_ablation
 experiment: E6
-# Paper-facing label: E7 traces. New paper E6 is experiments/e6_mixed_class.yaml.
+# RQ1 appendix (token/TTFT ablation). Paper E6 is experiments/e6_mixed_class.yaml.
+# Paper E7 is experiments/e7_joint_interference.yaml.
 # Keep experiment: E6 so the runner still expands ablation cells.
 mode: open_loop
 rps_frac: 0.9

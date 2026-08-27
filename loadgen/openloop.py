@@ -38,11 +38,11 @@ def phase_at(phases: list[Phase], elapsed: float) -> Phase:
     return phases[-1]
 
 
-def pick_prompt_class(phase: Phase) -> str:
+def pick_prompt_class(phase: Phase, rng: random.Random | None = None) -> str:
     mix = phase.mix
     if not mix:
         return phase.prompt_class
-    r = random.random()
+    r = (rng or random).random()
     acc = 0.0
     items = list(mix.items())
     for i, (cls, frac) in enumerate(items):
@@ -50,6 +50,44 @@ def pick_prompt_class(phase: Phase) -> str:
         if r <= acc or i == len(items) - 1:
             return str(cls)
     return phase.prompt_class
+
+
+def next_phase_start(phases: list[Phase], elapsed: float, duration_s: float) -> float:
+    for phase in phases:
+        if phase.until_s > elapsed:
+            return min(float(phase.until_s), duration_s)
+    return duration_s
+
+
+def freeze_class(phase: Phase, prompt_class: str) -> Phase:
+    return Phase(
+        until_s=phase.until_s,
+        rps=phase.rps,
+        concurrency=phase.concurrency,
+        prompt_class=prompt_class,
+        input_tokens=phase.input_tokens,
+        max_tokens=phase.max_tokens,
+        tenant_id=phase.tenant_id,
+        mix=None,
+    )
+
+
+def build_schedule(phases: list[Phase], duration_s: float, rng: random.Random) -> list[tuple[float, Phase]]:
+    """Deterministic open-loop arrivals so policies in the same rep share a trace."""
+    t = 0.0
+    out: list[tuple[float, Phase]] = []
+    while t < duration_s:
+        phase = phase_at(phases, t)
+        rps = max(float(phase.rps or 0.0), 0.0)
+        if rps <= 0:
+            nxt = next_phase_start(phases, t, duration_s)
+            if nxt <= t:
+                break
+            t = nxt
+            continue
+        out.append((t, freeze_class(phase, pick_prompt_class(phase, rng))))
+        t += 1.0 / rps
+    return out
 
 
 def phase_from_dict(raw: dict[str, Any], defaults: Phase | None = None) -> Phase:
@@ -118,25 +156,39 @@ async def run_open_loop(
     phases: list[Phase],
     stats: LoadStats,
     poisson: bool = False,
+    trace_seed: int | None = None,
 ) -> None:
     start = time.time()
     pending: set[asyncio.Task] = set()
+    rng = random.Random(trace_seed) if trace_seed is not None else None
+    schedule = None if rng is None else build_schedule(phases, duration_s, rng)
 
     async with httpx.AsyncClient() as client:
-        while True:
-            elapsed = time.time() - start
-            if elapsed >= duration_s:
-                break
-            phase = phase_at(phases, elapsed)
-            rps = max(float(phase.rps or 0.0), 0.0)
-            if rps <= 0:
-                await asyncio.sleep(0.05)
-                continue
-            task = asyncio.create_task(_one_request(client, url, phase, stats))
-            pending.add(task)
-            task.add_done_callback(pending.discard)
-            interval = random.expovariate(rps) if poisson else 1.0 / rps
-            await asyncio.sleep(interval)
+        if schedule is not None:
+            for launch_t, phase in schedule:
+                delay = launch_t - (time.time() - start)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                if time.time() - start >= duration_s:
+                    break
+                task = asyncio.create_task(_one_request(client, url, phase, stats))
+                pending.add(task)
+                task.add_done_callback(pending.discard)
+        else:
+            while True:
+                elapsed = time.time() - start
+                if elapsed >= duration_s:
+                    break
+                phase = phase_at(phases, elapsed)
+                rps = max(float(phase.rps or 0.0), 0.0)
+                if rps <= 0:
+                    await asyncio.sleep(0.05)
+                    continue
+                task = asyncio.create_task(_one_request(client, url, phase, stats))
+                pending.add(task)
+                task.add_done_callback(pending.discard)
+                interval = random.expovariate(rps) if poisson else 1.0 / rps
+                await asyncio.sleep(interval)
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
 
@@ -155,10 +207,18 @@ async def run(args: argparse.Namespace) -> LoadStats:
                 url=url, concurrency=concurrency, duration_s=duration, phases=stream, stats=stats
             )
             return stats
+        base_seed = getattr(args, "trace_seed", None)
         await asyncio.gather(
             *[
-                run_open_loop(url=url, duration_s=duration, phases=stream, stats=stats, poisson=poisson)
-                for stream in parsed
+                run_open_loop(
+                    url=url,
+                    duration_s=duration,
+                    phases=stream,
+                    stats=stats,
+                    poisson=poisson,
+                    trace_seed=None if base_seed is None else int(base_seed) + i,
+                )
+                for i, stream in enumerate(parsed)
             ]
         )
         return stats
@@ -181,7 +241,14 @@ async def run(args: argparse.Namespace) -> LoadStats:
         concurrency = args.concurrency or phases[0].concurrency or 1
         await run_closed_loop(url=url, concurrency=concurrency, duration_s=duration, phases=phases, stats=stats)
     else:
-        await run_open_loop(url=url, duration_s=duration, phases=phases, stats=stats, poisson=poisson)
+        await run_open_loop(
+            url=url,
+            duration_s=duration,
+            phases=phases,
+            stats=stats,
+            poisson=poisson,
+            trace_seed=getattr(args, "trace_seed", None),
+        )
     return stats
 
 

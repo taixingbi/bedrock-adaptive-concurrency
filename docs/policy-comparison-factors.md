@@ -19,13 +19,13 @@ Hold workload, tenants, and environment fixed; vary only the admission / concurr
 
 ## Variable
 
-- Admission policy: global fixed / request-AIMD / token-aware vs tenant-only vs class-aware vs tenant+class
+- Admission policy: global token-aware vs class-only vs tenant-only vs hierarchical (all share token-aware \(C_g(t)\))
 
 ## Evaluation
 
-- Per-tenant SLO-goodput \(G_A, G_B\) (primary for E5/E6)
-- Per-class TTFT / E2E
-- Rejection rate by tenant and class
+- Per-tenant-class SLO-goodput \(G_A^{\mathrm{short}}\) (primary for E5/E7)
+- Per-class SLO-goodput \(G_{\mathrm{short}}\) (primary for E6)
+- Rejection rate by tenant and class (and \(G_B\), so isolation is not refuse-all-B)
 - Fairness and recovery time
 - Aggregate SLO-goodput (secondary)
 - Bedrock 429 / error rate

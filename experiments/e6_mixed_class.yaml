@@ -1,15 +1,19 @@
-name: e6_mixed_class
+name: e6_class_isolation
 experiment: E6_mixed
 mode: open_loop
 warmup_s: 0
 measure_s: 420
 repetitions: 5
+interleave: true
+replay_traces: true
 queue_max: 16
 queue_timeout_s: 2.0
 c_global: 2
+# One tenant. Tenant-only cannot split short vs long.
 tenant:
   id: A
   c_max: 2
+  classes: {short: 2, long: 1}
 class_caps:
   short: 2
   long: 1
@@ -17,9 +21,15 @@ slo:
   short: 576
   long: 769
 policies:
-  - {name: tenant_only, policy: tenant_admit, c: 2, caps: [global, tenant]}
-  - {name: tenant_class, policy: tenant_admit, c: 2, caps: [global, tenant, class]}
   - {name: global_token, policy: token_slo_aimd, c: 2, caps: [global]}
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+  - {name: hierarchical, policy: token_slo_aimd, c: 2, caps: [global, tenant, class]}
+policy_schedules:
+  - [global_token, tenant_only, class_only, hierarchical]
+  - [class_only, hierarchical, global_token, tenant_only]
+  - [tenant_only, global_token, hierarchical, class_only]
+  - [hierarchical, class_only, tenant_only, global_token]
 phases:
   - until_s: 120
     rps_frac: 0.5

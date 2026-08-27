@@ -66,6 +66,7 @@ def test_tenant_and_class_slo_on_event(tmp_path: Path):
         class_slo_ms={"short": 576, "long": 3000},
         tenant_caps={"A": 2, "B": 1},
         class_caps={"short": 2, "long": 1},
+        tenant_class_caps={"A": {"short": 2, "long": 1}, "B": {"short": 1, "long": 1}},
         admit_caps="global,tenant,class",
         controller_window_s=60,
         timeseries_s=60,
@@ -83,9 +84,38 @@ def test_tenant_and_class_slo_on_event(tmp_path: Path):
         assert body["c_global"] == 2
         assert body["c_tenant"] == 2
         assert body["c_class"] == 2
+        assert body["c_tenant_class"] == 2
         health = client.get("/health").json()
         assert health["admit_caps"] == "global,tenant,class"
         assert health["policy"] == "tenant_admit"
+
+
+def test_token_aware_with_hierarchical_caps(tmp_path: Path):
+    settings = Settings(
+        policy="token_slo_aimd",
+        concurrency_limit=2,
+        c_max=2,
+        queue_max=8,
+        results_path=str(tmp_path),
+        run_id="hier",
+        mock_bedrock=True,
+        ttft_slo_ms=576,
+        tenant_caps={"A": 2, "B": 1},
+        tenant_class_caps={"A": {"short": 2, "long": 1}},
+        admit_caps="global,tenant,class",
+        controller_window_s=60,
+        timeseries_s=60,
+    )
+    assert settings.use_tenant_cap
+    assert not settings.use_class_cap
+    assert settings.use_tenant_class_cap
+    app = create_app(settings, bedrock_client=MockBedrock(ttft_s=0.0))
+    with TestClient(app) as client:
+        resp = client.post("/v1/infer", json={"prompt_class": "short", "max_tokens": 8, "tenant_id": "A"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["policy"] == "token_slo_aimd"
+        assert body["c_tenant_class"] == 2
 
 
 def test_queue_reject(tmp_path: Path):

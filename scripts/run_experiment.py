@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from analysis.knee import find_knee
-from analysis.metrics import load_events, summarize, summarize_groups
+from analysis.metrics import load_events, summarize, summarize_groups, tenant_class_key
 from analysis.plot import plot_e1, plot_timeseries
 from analysis.quota import (
     BEDROCK_RPM_QUOTA,
@@ -135,6 +135,7 @@ def cell_env(spec: dict[str, Any], cell: dict[str, Any], run_id: str, args: argp
         "ADMIT_CAPS": ",".join(str(x) for x in (merged.get("caps") or spec.get("admit_caps") or ["global"])),
         "TENANT_CAPS": json.dumps(_tenant_caps(spec)),
         "CLASS_CAPS": json.dumps(_class_caps(spec)),
+        "TENANT_CLASS_CAPS": json.dumps(_tenant_class_caps(spec)),
         "CLASS_SLO_MS": json.dumps(_class_slo(spec, args)),
     }
     if spec.get("c_global") is not None and args.c_max is None:
@@ -149,6 +150,22 @@ def _tenant_caps(spec: dict[str, Any]) -> dict[str, int]:
     if spec.get("tenant", {}).get("c_max") is not None:
         caps[str(spec["tenant"].get("id", "A"))] = int(spec["tenant"]["c_max"])
     return caps
+
+
+def _tenant_class_caps(spec: dict[str, Any]) -> dict[str, dict[str, int]]:
+    out: dict[str, dict[str, int]] = {}
+    for tid, cfg in (spec.get("tenants") or {}).items():
+        classes = cfg.get("classes") or {}
+        if classes:
+            out[str(tid)] = {str(k): int(v) for k, v in classes.items()}
+    tenant = spec.get("tenant") or {}
+    classes = tenant.get("classes") or {}
+    if classes:
+        out[str(tenant.get("id", "A"))] = {str(k): int(v) for k, v in classes.items()}
+    nested = spec.get("tenant_class_caps") or {}
+    for tid, caps in nested.items():
+        out[str(tid)] = {str(k): int(v) for k, v in caps.items()}
+    return out
 
 
 def _class_caps(spec: dict[str, Any]) -> dict[str, int]:
@@ -194,6 +211,7 @@ def streams_for(spec: dict[str, Any], cell: dict[str, Any]) -> list[list[Phase]]
                         concurrency=cell.get("c"),
                         prompt_class=tcfg.get("prompt_class", "short"),
                         tenant_id=tid,
+                        mix=tcfg.get("mix"),
                     )
                 )
             streams.append(plist)
@@ -234,7 +252,7 @@ def cells_from_spec(spec: dict[str, Any], derived: dict[str, Any]) -> list[dict[
     if spec.get("cells"):
         return list(spec["cells"])
     experiment = spec.get("experiment", "")
-    if experiment in {"E5_noisy", "E6_mixed"}:
+    if experiment in {"E5_noisy", "E6_mixed", "E7_joint"}:
         c0 = int(spec.get("c_global") or derived.get("c_knee") or 2)
         cells = []
         for policy in spec.get("policies") or []:
@@ -314,6 +332,27 @@ def cells_from_spec(spec: dict[str, Any], derived: dict[str, Any]) -> list[dict[
     return cells
 
 
+def cells_for_rep(cells: list[dict[str, Any]], spec: dict[str, Any], rep: int) -> list[dict[str, Any]]:
+    """Interleave policies across reps so Bedrock drift is not aliased to one policy."""
+    by_name = {c["name"]: c for c in cells}
+    schedules = spec.get("policy_schedules") or []
+    if schedules:
+        order = schedules[(rep - 1) % len(schedules)]
+        return [by_name[name] for name in order]
+    n = len(cells)
+    if n == 0:
+        return []
+    k = (rep - 1) % n
+    return cells[k:] + cells[:k]
+
+
+def trace_seed_for(spec_name: str, rep: int) -> int:
+    import hashlib
+
+    digest = hashlib.sha256(f"{spec_name}:rep{rep}".encode("utf-8")).hexdigest()
+    return int(digest[:8], 16)
+
+
 class _Args:
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -342,6 +381,7 @@ def run_cell(spec: dict[str, Any], cell: dict[str, Any], args: argparse.Namespac
             input_tokens=(spec.get("workload") or {}).get("input_tokens"),
             max_tokens=(spec.get("workload") or {}).get("max_tokens"),
             poisson=bool(spec.get("poisson", False)),
+            trace_seed=trace_seed_for(spec["name"], rep) if spec.get("replay_traces", spec.get("interleave")) else None,
             phases=[
                 {
                     "until_s": p.until_s,
@@ -384,6 +424,7 @@ def run_cell(spec: dict[str, Any], cell: dict[str, Any], args: argparse.Namespac
     summary["policy"] = env["POLICY"]
     summary["by_tenant"] = summarize_groups(events, key="tenant_id")
     summary["by_class"] = summarize_groups(events, key="prompt_class")
+    summary["by_tenant_class"] = summarize_groups(events, key_fn=tenant_class_key)
     (result_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     return summary
 
@@ -409,10 +450,16 @@ def main() -> None:
     reps = int(args.reps or spec.get("repetitions") or 1)
     cells = cells_from_spec(spec, spec["_derived"])
     summaries: list[dict[str, Any]] = []
-    for cell in cells:
+    if spec.get("interleave"):
         for rep in range(1, reps + 1):
-            print(f"== {spec['name']} {cell['name']} rep{rep} ==")
-            summaries.append(run_cell(spec, cell, args, rep))
+            for cell in cells_for_rep(cells, spec, rep):
+                print(f"== {spec['name']} {cell['name']} rep{rep} ==")
+                summaries.append(run_cell(spec, cell, args, rep))
+    else:
+        for cell in cells:
+            for rep in range(1, reps + 1):
+                print(f"== {spec['name']} {cell['name']} rep{rep} ==")
+                summaries.append(run_cell(spec, cell, args, rep))
 
     out_dir = Path(args.results) / spec["name"]
     out_dir.mkdir(parents=True, exist_ok=True)

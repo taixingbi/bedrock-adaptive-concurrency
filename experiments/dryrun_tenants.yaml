@@ -4,23 +4,29 @@ mode: open_loop
 warmup_s: 0
 measure_s: 2
 repetitions: 1
+interleave: true
+replay_traces: true
 queue_max: 8
 queue_timeout_s: 1.0
 c_global: 2
 tenants:
   A:
-    class: short
     c_max: 2
-    ttft_slo_ms: 576
+    classes: {short: 2}
   B:
-    class: long
     c_max: 1
-    ttft_slo_ms: 769
+    classes: {short: 1}
 class_caps:
   short: 2
   long: 1
+slo:
+  short: 576
+  long: 769
 policies:
-  - {name: tenant_class, policy: tenant_admit, c: 2, caps: [global, tenant, class]}
+  - {name: global_token, policy: token_slo_aimd, c: 2, caps: [global]}
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+  - {name: hierarchical, policy: token_slo_aimd, c: 2, caps: [global, tenant, class]}
 phases:
   - until_s: 1
     tenants:
@@ -29,4 +35,4 @@ phases:
   - until_s: 2
     tenants:
       A: {rps: 2, prompt_class: short}
-      B: {rps: 1, prompt_class: long}
+      B: {rps: 2, prompt_class: short}

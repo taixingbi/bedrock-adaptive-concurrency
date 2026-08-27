@@ -1,0 +1,46 @@
+name: e7_joint_interference
+experiment: E7_joint
+mode: open_loop
+warmup_s: 0
+measure_s: 420
+repetitions: 3
+interleave: true
+replay_traces: true
+queue_max: 16
+queue_timeout_s: 2.0
+c_global: 2
+# Tenant × class both vary. Hierarchical should beat tenant-only and class-only on G_A^short.
+tenants:
+  A:
+    c_max: 2
+    classes: {short: 2, long: 1}
+  B:
+    c_max: 1
+    classes: {short: 1, long: 1}
+class_caps:
+  short: 2
+  long: 1
+slo:
+  short: 576
+  long: 769
+policies:
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+  - {name: hierarchical, policy: token_slo_aimd, c: 2, caps: [global, tenant, class]}
+policy_schedules:
+  - [tenant_only, class_only, hierarchical]
+  - [class_only, hierarchical, tenant_only]
+  - [hierarchical, tenant_only, class_only]
+phases:
+  - until_s: 120
+    tenants:
+      A: {rps_frac: 0.5, mix: {short: 1.0, long: 0.0}}
+      B: {rps: 0}
+  - until_s: 300
+    tenants:
+      A: {rps_frac: 0.5, mix: {short: 0.8, long: 0.2}}
+      B: {rps_frac: 0.7, mix: {short: 0.5, long: 0.5}}
+  - until_s: 420
+    tenants:
+      A: {rps_frac: 0.5, mix: {short: 1.0, long: 0.0}}
+      B: {rps: 0}

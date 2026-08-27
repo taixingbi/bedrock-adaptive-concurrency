@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from scripts.run_experiment import cells_from_spec, expand_spec, load_spec, streams_for
+from scripts.run_experiment import cells_for_rep, cells_from_spec, expand_spec, load_spec, streams_for
 
 
 def test_e1_cells():
@@ -56,28 +56,39 @@ def test_e6_ablation_cells():
 def test_e5_noisy_cells_and_streams():
     spec = expand_spec(load_spec(Path("experiments/e5_noisy_neighbor.yaml")), {"c_knee": 1, "r_knee": 1.84})
     cells = cells_from_spec(spec, spec["_derived"])
-    assert [c["name"] for c in cells] == [
-        "global_fixed",
-        "global_slo_aimd",
-        "global_token",
-        "tenant_only",
-        "class_only",
-        "tenant_class",
-    ]
+    assert [c["name"] for c in cells] == ["global_token", "tenant_only", "class_only", "hierarchical"]
+    assert all(c["policy"] == "token_slo_aimd" for c in cells)
     assert cells[-1]["caps"] == ["global", "tenant", "class"]
+    assert spec["phases"][1]["tenants"]["B"]["prompt_class"] == "short"
     assert spec["phases"][1]["tenants"]["B"]["rps"] == 0.9 * 1.84
     streams = streams_for(spec, cells[-1])
     assert [s[0].tenant_id for s in streams] == ["A", "B"]
     assert streams[1][0].rps == 0
-    assert streams[1][1].prompt_class == "long"
+    assert streams[1][1].prompt_class == "short"
+    order = cells_for_rep(cells, spec, 1)
+    assert [c["name"] for c in order] == ["global_token", "tenant_only", "class_only", "hierarchical"]
+    order2 = cells_for_rep(cells, spec, 2)
+    assert [c["name"] for c in order2] == ["class_only", "hierarchical", "global_token", "tenant_only"]
 
 
 def test_e6_mixed_cells_and_mix():
     spec = expand_spec(load_spec(Path("experiments/e6_mixed_class.yaml")), {"c_knee": 1, "r_knee": 1.84})
     cells = cells_from_spec(spec, spec["_derived"])
-    assert [c["name"] for c in cells] == ["tenant_only", "tenant_class", "global_token"]
+    assert [c["name"] for c in cells] == ["global_token", "tenant_only", "class_only", "hierarchical"]
     streams = streams_for(spec, cells[1])
     assert len(streams) == 1
     assert streams[0][0].tenant_id == "A"
     assert streams[0][1].mix == {"short": 0.7, "long": 0.3}
     assert spec["phases"][1]["rps"] == 0.9 * 1.84
+
+
+def test_e7_joint_mix_per_tenant():
+    spec = expand_spec(load_spec(Path("experiments/e7_joint_interference.yaml")), {"c_knee": 1, "r_knee": 1.84})
+    cells = cells_from_spec(spec, spec["_derived"])
+    assert [c["name"] for c in cells] == ["tenant_only", "class_only", "hierarchical"]
+    streams = streams_for(spec, cells[-1])
+    assert [s[0].tenant_id for s in streams] == ["A", "B"]
+    assert streams[0][1].mix == {"short": 0.8, "long": 0.2}
+    assert streams[1][1].mix == {"short": 0.5, "long": 0.5}
+    assert spec["phases"][1]["tenants"]["B"]["rps"] == 0.7 * 1.84
+    assert spec["repetitions"] == 3

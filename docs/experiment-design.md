@@ -243,7 +243,7 @@ Two tenants, each mixed. This is where tenant \(\times\) class happen together.
 | P2 120–300s | \(0.5 R_{\mathrm{ref}}\), 80% short / 20% long | \(0.7 R_{\mathrm{ref}}\), 50/50 |
 | P3 300–420s | \(0.5 R_{\mathrm{ref}}\), 100% short | 0 |
 
-Policies: Tenant-only Token, Class-only Token, Hierarchical Token. 3 reps; optional `--reps 5` on the same YAML. Do not retune the mix to enlarge the hierarchical gap.
+Policies: Tenant-only Token, Class-only Token, Hierarchical Token. **5 reps** (same YAML; do not retune the mix to enlarge the hierarchical gap).
 
 **Expected:** \(G_A^{\mathrm{short}}\) satisfies Hierarchical \(>\) Tenant-only and Hierarchical \(>\) Class-only. Watch \(G_B\) so the win is not “protect A by refusing all of B.” That is: **tenant and class controls are complementary**.
 

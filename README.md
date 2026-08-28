@@ -80,10 +80,10 @@ python scripts/run_experiment.py experiments/e4_token_shift.yaml --c-knee 1 --r-
 python scripts/run_experiment.py experiments/dryrun_tenants.yaml --mock --reps 1 --port 8080
 python scripts/run_experiment.py experiments/dryrun_joint.yaml --mock --reps 1 --port 8080
 
-# E5–E7 (Bedrock; interleaved policies; 5 / 5 / 3 reps)
+# E5–E7 (Bedrock; interleaved policies; 5 / 5 / 5 reps)
 python scripts/run_experiment.py experiments/e5_noisy_neighbor.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 python scripts/run_experiment.py experiments/e6_mixed_class.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
-python scripts/run_experiment.py experiments/e7_joint_interference.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+python scripts/run_experiment.py experiments/e7_joint_interference.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080 --reps 5
 
 # P0 overflow-reject control (3 reps; unified immediate reject)
 python scripts/run_experiment.py experiments/e5_overflow_reject.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080

@@ -1,6 +1,14 @@
 from pathlib import Path
 
-from scripts.run_experiment import cells_for_rep, cells_from_spec, expand_spec, load_spec, streams_for
+from scripts.run_experiment import (
+    cell_already_done,
+    cells_for_rep,
+    cells_from_spec,
+    collect_summaries,
+    expand_spec,
+    load_spec,
+    streams_for,
+)
 
 
 def test_e1_cells():
@@ -91,7 +99,18 @@ def test_e7_joint_mix_per_tenant():
     assert streams[0][1].mix == {"short": 0.8, "long": 0.2}
     assert streams[1][1].mix == {"short": 0.5, "long": 0.5}
     assert spec["phases"][1]["tenants"]["B"]["rps"] == 0.7 * 1.84
-    assert spec["repetitions"] == 3
+    assert spec["repetitions"] == 5
+    assert len(spec["policy_schedules"]) == 5
+    assert [c["name"] for c in cells_for_rep(cells, spec, 4)] == [
+        "tenant_only",
+        "hierarchical",
+        "class_only",
+    ]
+    assert [c["name"] for c in cells_for_rep(cells, spec, 5)] == [
+        "class_only",
+        "tenant_only",
+        "hierarchical",
+    ]
 
 
 def test_overflow_reject_specs_use_immediate_reject():
@@ -103,3 +122,14 @@ def test_overflow_reject_specs_use_immediate_reject():
     spec = expand_spec(e5, {"c_knee": 1, "r_knee": 1.84})
     cells = cells_from_spec(spec, spec["_derived"])
     assert [c["name"] for c in cells] == ["global_token", "tenant_only", "class_only", "hierarchical"]
+
+
+def test_skip_existing_cell_and_collect_summaries(tmp_path):
+    cell = tmp_path / "e7_joint_interference" / "hierarchical" / "rep1"
+    cell.mkdir(parents=True)
+    (cell / "events.jsonl").write_text("{}\n")
+    (cell / "summary.json").write_text('{"cell":"hierarchical","rep":1}')
+    assert cell_already_done(tmp_path, "e7_joint_interference", "hierarchical", 1)
+    assert not cell_already_done(tmp_path, "e7_joint_interference", "hierarchical", 2)
+    rows = collect_summaries(tmp_path / "e7_joint_interference")
+    assert rows == [{"cell": "hierarchical", "rep": 1}]

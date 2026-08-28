@@ -3,8 +3,8 @@ experiment: E7_joint
 mode: open_loop
 warmup_s: 0
 measure_s: 420
-repetitions: 3
-# P1 optional: --reps 5 on the same YAML (do not retune the workload).
+repetitions: 5
+# P1 ran: --reps 5 on this YAML (do not retune the workload).
 interleave: true
 replay_traces: true
 queue_max: 16
@@ -32,6 +32,8 @@ policy_schedules:
   - [tenant_only, class_only, hierarchical]
   - [class_only, hierarchical, tenant_only]
   - [hierarchical, tenant_only, class_only]
+  - [tenant_only, hierarchical, class_only]
+  - [class_only, tenant_only, hierarchical]
 phases:
   - until_s: 120
     tenants:

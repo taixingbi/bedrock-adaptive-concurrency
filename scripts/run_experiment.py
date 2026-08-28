@@ -347,6 +347,23 @@ def cells_for_rep(cells: list[dict[str, Any]], spec: dict[str, Any], rep: int) -
     return cells[k:] + cells[:k]
 
 
+def cell_events_path(results: str | Path, spec_name: str, cell_name: str, rep: int) -> Path:
+    return Path(results) / spec_name / cell_name / f"rep{rep}" / "events.jsonl"
+
+
+def cell_already_done(results: str | Path, spec_name: str, cell_name: str, rep: int) -> bool:
+    path = cell_events_path(results, spec_name, cell_name, rep)
+    return path.exists() and path.stat().st_size > 0
+
+
+def collect_summaries(out_dir: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in out_dir.glob("*/rep*/summary.json"):
+        rows.append(json.loads(path.read_text(encoding="utf-8")))
+    rows.sort(key=lambda r: (str(r.get("cell") or ""), int(r.get("rep") or 0)))
+    return rows
+
+
 def trace_seed_for(spec_name: str, rep: int) -> int:
     import hashlib
 
@@ -455,15 +472,24 @@ def main() -> None:
         for rep in range(1, reps + 1):
             for cell in cells_for_rep(cells, spec, rep):
                 print(f"== {spec['name']} {cell['name']} rep{rep} ==")
+                if cell_already_done(args.results, spec["name"], cell["name"], rep):
+                    print("skip existing")
+                    continue
                 summaries.append(run_cell(spec, cell, args, rep))
     else:
         for cell in cells:
             for rep in range(1, reps + 1):
                 print(f"== {spec['name']} {cell['name']} rep{rep} ==")
+                if cell_already_done(args.results, spec["name"], cell["name"], rep):
+                    print("skip existing")
+                    continue
                 summaries.append(run_cell(spec, cell, args, rep))
 
     out_dir = Path(args.results) / spec["name"]
     out_dir.mkdir(parents=True, exist_ok=True)
+    on_disk = collect_summaries(out_dir)
+    if on_disk:
+        summaries = on_disk
     payload: dict[str, Any] = {"spec": spec["name"], "summaries": summaries}
     if spec.get("experiment") == "E1":
         by_c: dict[int, list[dict[str, Any]]] = {}

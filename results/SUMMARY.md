@@ -25,7 +25,7 @@ E5–E7 all sit on the E4 controller \(C_g(t)=\mathrm{TokenAwareController}\). I
 | do not cite | `e5_noisy_neighbor/`, `e6_mixed_class/` | v1: A=short/B=long confound; static `tenant_admit`. |
 | E5 tenant isolation | `e5_tenant_isolation/` | Same-class noisy neighbor. 4×5. |
 | E6 class isolation | `e6_class_isolation/` | Same-tenant mixed class. 4×5. |
-| E7 joint | `e7_joint_interference/` | Tenant × class. 3×3. Optional `--reps 5`. |
+| E7 joint | `e7_joint_interference/` | Tenant × class. 3 policies × 5 reps. Ran. |
 | P0 overflow-reject | `e5_overflow_reject/`, `e6_overflow_reject/` | Unified immediate reject. 3 reps. Ran. |
 | ignore | `dryrun/`, `dryrun_tenants/`, `dryrun_joint/`, `dryrun_overflow/`, `local/` | Mock / smoke. |
 
@@ -156,17 +156,17 @@ One tenant. P2 is 70% short / 30% long at \(0.9 R_{\mathrm{ref}}\). Bedrock 429 
 
 Tenant-only is **not** equal to global: `tenant_full` vs `queue_timeout` again. Rank is Global < Tenant-only < Class-only ≈ Hierarchical. The identified gap is class vs tenant, not tenant vs global.
 
-## E7 — joint interference (`e7_joint_interference/`, 3 reps, 420 s)
+## E7 — joint interference (`e7_joint_interference/`, 5 reps, 420 s)
 
-A mixed + B mixed burst. Bedrock 429 = 0. Primary: P2 \(G_{A,\mathrm{short}}\).
+A mixed + B mixed burst. Bedrock 429 = 0. Primary: P2 \(G_{A,\mathrm{short}}\). Same YAML; reps 4–5 added, 1–3 kept.
 
-| Policy | P2 \(G_{A,\mathrm{short}}\) | P2 att. | P2 P95 | P2 \(G_B\) | Whole-run \(G_{A,\mathrm{short}}\) |
-|---|---:|---:|---:|---:|---:|
-| Tenant-only | 0.188 | 0.37 | 2082 ms | 0.169 | 0.599 |
-| Class-only | 0.205 | 0.39 | 2121 ms | **0.290** | 0.607 |
-| Hierarchical | **0.220** | 0.41 | 2029 ms | 0.219 | **0.616** |
+| Policy | P2 \(G_{A,\mathrm{short}}\) | median | P2 att. | P2 P95 | P2 \(G_B\) | Whole-run \(G_{A,\mathrm{short}}\) |
+|---|---:|---:|---:|---:|---:|---:|
+| Tenant-only | 0.183 | 0.172 | 0.36 | 2078 ms | 0.171 | 0.597 |
+| Class-only | 0.213 | 0.182 | 0.39 | 2099 ms | **0.302** | 0.612 |
+| Hierarchical | **0.234** | **0.216** | 0.42 | 2031 ms | 0.236 | **0.623** |
 
-**Claim, weakly:** hierarchical is best on \(G_{A,\mathrm{short}}\) in all 3 reps vs tenant-only, and in 2/3 vs class-only. It does not zero \(G_B\). The complementary gap is **small** (~0.188 → 0.220). Do not sell E7 as the main result; E5 and E6 identify the two layers. Optional: more reps if a reviewer wants a significance test. The P2 log’s `decrease-token` + HTTP 429s are longs occupying \(W_t=4608\) at \(C_g=1\), then gateway sheds — expected.
+**Claim, weakly:** hierarchical beats tenant-only on \(G_{A,\mathrm{short}}\) in **5/5** reps and class-only in **4/5** (loses rep2: 0.244 vs 0.278). Mean gap is still small (+0.052 vs tenant, +0.022 vs class). It does not zero \(G_B\). Do not sell E7 as the main result; E5 and E6 identify the two layers. Do not retune the mix. The P2 log’s `decrease-token` + HTTP 429s are longs occupying \(W_t=4608\) at \(C_g=1\), then gateway sheds — expected.
 
 ## P0 — overflow-reject control (`e5_overflow_reject/`, `e6_overflow_reject/`, 3 reps, 420 s)
 
@@ -194,7 +194,7 @@ E6 P2:
 
 P1/P3 \(G_A\) / \(G_{\mathrm{short}}\) stay ~0.9 on E5. E6 P1 is a bit noisier (tenant 0.80 vs global 0.92).
 
-Optional later: E7 `--reps 5` (do not retune). E1 C=1,2,4 × 3 reps (write “best observed,” not universal knee, if skipped).
+Optional later: E1 C=1,2,4 × 3 reps (write “best observed,” not universal knee, if skipped).
 
 ## Allowed paper claims
 
@@ -204,7 +204,7 @@ Optional later: E7 `--reps 5` (do not retune). E1 C=1,2,4 × 3 reps (write “be
 4. Token demand changes the right \(C\) at constant RPS; token-aware recovers after long→short where request-count AIMD does not (E4, RQ1 ablation −token).
 5. Same-class noisy neighbor (queued 5-rep): tenant cap moves rejects onto B (E5 P2 \(G_A\) 0.49 vs global 0.30). Under unified reject the tenant-vs-class gap is tiny; Tenant-only still beats Global (0.45 vs 0.34).
 6. Same-tenant mixed class (queued 5-rep): class cap restores short (E6 P2 \(G_{\mathrm{short}}\) 0.44 vs tenant-only 0.25). Under unified reject Class-only \(>\) Tenant-only in 3/3 and Tenant-only \(\approx\) Global.
-7. Hierarchical is directionally best under joint interference, but the extra gap is small (E7).
+7. Hierarchical is directionally best under joint interference (5/5 vs tenant, 4/5 vs class), but the extra gap is small (E7).
 
 ## Traps
 
@@ -219,7 +219,7 @@ Optional later: E7 `--reps 5` (do not retune). E1 C=1,2,4 × 3 reps (write “be
 - E5–E7 primary split is P2 \(G_A^{\mathrm{short}}\) / \(G_{\mathrm{short}}\), not whole-run aggregate. P1/P3 wash.
 - Do not write E5 “class-only ≈ global”: class-only still cannot prefer A, but immediate reject beats `queue_timeout`.
 - Do not write E6 “tenant-only ≈ global”: same reject-vs-queue artifact.
-- E7 complementary effect is small (3 reps). Do not hang the paper on it.
+- E7 complementary effect is small (5 reps: 0.183 → 0.234). Do not hang the paper on it.
 - Watch \(G_B\): isolation is not “refuse all of B.” Tenant-only on E5 still gives P2 \(G_B\approx 0.68\) (queued) / \(\approx 1.21\) (reject; almost all admits meet SLO).
 - P0: do not sell the queued E5 tenant-vs-class gap (0.492 vs 0.424) as causal identity — it shrinks to 0.453 vs 0.442 with unified reject. The E6 class-vs-tenant ordering survives.
 

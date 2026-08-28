@@ -153,9 +153,9 @@ Canonical traces: `results/e1_pilot/`, `e2_light_load/`, `e3_dynamic_load_v2/`, 
 
 ### E1 — Concurrency characterization
 
-Fixed `short`. Closed-loop sweep \(C\). This account used cheap scout \(C\in\{1,2,4,8\}\), 1 rep. Output: \(C^*\), \(R_{knee}\), interactive SLO. Optional later: C=1,2,4 × 3–5 reps. Do not run `e1_sweep` (16/32/64).
+Fixed `short`. Closed-loop sweep \(C\). This account used cheap scout \(C\in\{1,2,4,8\}\), 1 rep (`e1_pilot/`). Output: \(C^*\), \(R_{knee}\), interactive SLO. P2 robustness: `e1_replication/` is C=1,2,4 × 3 reps on the same closed-loop recipe; do not overwrite `e1_pilot/` or run `e1_sweep` (16/32/64).
 
-Write **best observed operating point \(C^*=1\)**, not “true Bedrock knee equals 1”.
+Write **best observed operating point \(C^*=1\)**, not “true Bedrock knee equals 1”. P2 ran: `e1_replication/` confirms C=1 \(>\) C=2 \(>\) C=4 on goodput (3/3). Do not retune scout knobs from that run.
 
 ### E2 — Light-load sanity
 

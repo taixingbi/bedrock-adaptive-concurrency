@@ -13,6 +13,7 @@ E5–E7 all sit on the E4 controller \(C_g(t)=\mathrm{TokenAwareController}\). I
 | Use | Dir | Why |
 |---|---|---|
 | E1 knobs | `e1_pilot/` | Cheap C=1,2,4,8 scout. Do not run `e1_sweep`. |
+| P2 E1 reps | `e1_replication/` | C=1,2,4 × 3 closed-loop. Ran. Knobs stay `e1_pilot/`. |
 | E1 long SLO | `e1_long_scout/` | C=1 long; SLO_long = 769 ms. |
 | E2 sanity | `e2_light_load/` | Demand-gated SLO-AIMD. |
 | E3 main | `e3_dynamic_load_v2/` | Backend-TTFT + demand gate, 5 reps. |
@@ -38,7 +39,19 @@ E5–E7 all sit on the E4 controller \(C_g(t)=\mathrm{TokenAwareController}\). I
 | 4 | 1.25 | 0.90 | 9381 ms | 6 |
 | 8 | 1.25 | 0.81 | 8282 ms | 31 |
 
-**Claim:** Maverick has a concurrency knee at \(C=1\). Extra in-flight cuts goodput and blows the tail. Those 429s are runtime congestion, not the 800 RPM cliff (C=1 is ~110 RPM).
+**Claim:** best observed operating point in the scout is \(C^*=1\). Extra in-flight cuts goodput and blows the tail. Those 429s are runtime congestion, not the 800 RPM cliff (C=1 is ~110 RPM). Do not write “true Bedrock knee equals 1.”
+
+### E1 replication (`e1_replication/`, C=1,2,4 × 3, same 30s+60s recipe)
+
+Pass: \(C=1\) still best. Do **not** retune \(R_{knee}\) / SLO from this run (`find_knee` would emit \(R\approx 1.55\), SLO \(\approx 1482\) ms from mean C=1 P95).
+
+| \(C\) | Throughput | SLO-goodput | median goodput | TTFT P95 | Bedrock 429 /rep |
+|---|---:|---:|---:|---:|---:|
+| **1** | **1.55** | **1.23** | **0.86** | **988 ms** | **0.0** |
+| 2 | 1.30 | 0.61 | 0.60 | 3041 ms | 2.3 |
+| 4 | 1.26 | 0.44 | 0.46 | 8878 ms | 7.3 |
+
+C=1 SLO-goodput \(>\) C=2 in **3/3** reps. C=1 P95 is **not** stable: 373 / 1357 / 1234 ms (rep1 matches the scout; reps 2–3 miss 576 ms). Downstream E2–E7 keep scout knobs \(R_{knee}\approx 1.84\), SLO \(= 576\) ms.
 
 ### E1 long scout (`e1_long_scout/`, C=1, 1 rep)
 
@@ -194,11 +207,9 @@ E6 P2:
 
 P1/P3 \(G_A\) / \(G_{\mathrm{short}}\) stay ~0.9 on E5. E6 P1 is a bit noisier (tenant 0.80 vs global 0.92).
 
-Optional later: E1 C=1,2,4 × 3 reps (write “best observed,” not universal knee, if skipped).
-
 ## Allowed paper claims
 
-1. Bedrock Llama 4 Maverick has a concurrency knee at \(C=1\) (E1).
+1. Bedrock Llama 4 Maverick’s **best observed** concurrency in the scout is \(C^*=1\) (E1). Replication keeps that ordering (C=1 \(>\) C=2 \(>\) C=4 goodput, 3/3) but C=1 P95 is not always 384 ms.
 2. Best \(C\) moves with offered load; Fixed-1 collapses in the E3 burst.
 3. SLO-AIMD (+15.5% whole-run goodput vs Fixed) by raising \(C\) only under demand + healthy backend TTFT.
 4. Token demand changes the right \(C\) at constant RPS; token-aware recovers after long→short where request-count AIMD does not (E4, RQ1 ablation −token).
@@ -221,6 +232,7 @@ Optional later: E1 C=1,2,4 × 3 reps (write “best observed,” not universal k
 - Do not write E6 “tenant-only ≈ global”: same reject-vs-queue artifact.
 - E7 complementary effect is small (5 reps: 0.183 → 0.234). Do not hang the paper on it.
 - Watch \(G_B\): isolation is not “refuse all of B.” Tenant-only on E5 still gives P2 \(G_B\approx 0.68\) (queued) / \(\approx 1.21\) (reject; almost all admits meet SLO).
+- Do not replace scout knobs with `e1_replication/` `find_knee` (\(R\approx 1.55\), SLO \(\approx 1482\) ms). E2–E7 stay \(R_{knee}\approx 1.84\), SLO \(= 576\) ms.
 - P0: do not sell the queued E5 tenant-vs-class gap (0.492 vs 0.424) as causal identity — it shrinks to 0.453 vs 0.442 with unified reject. The E6 class-vs-tenant ordering survives.
 
 ## Recompute

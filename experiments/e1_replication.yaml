@@ -1,0 +1,21 @@
+name: e1_replication
+experiment: E1
+mode: closed_loop
+policy: fixed
+workload:
+  prompt_class: short
+  input_tokens: 512
+  max_tokens: 128
+  temperature: 0
+  streaming: true
+concurrency: [1, 2, 4]
+warmup_s: 30
+measure_s: 60
+repetitions: 3
+interleave: true
+replay_traces: true
+policy_schedules:
+  - [c1, c2, c4]
+  - [c2, c4, c1]
+  - [c4, c1, c2]
+# P2: confirm C=1→C=2 is stable. Do not run C=8 or e1_sweep. Knobs stay from e1_pilot.

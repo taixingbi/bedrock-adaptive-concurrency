@@ -17,6 +17,17 @@ def test_e1_cells():
     assert [c["c"] for c in cells] == [1, 2, 4, 8, 16, 32, 64]
 
 
+def test_e1_replication_skips_c8_and_interleaves():
+    spec = load_spec(Path("experiments/e1_replication.yaml"))
+    cells = cells_from_spec(spec, {})
+    assert [c["name"] for c in cells] == ["c1", "c2", "c4"]
+    assert spec["repetitions"] == 3
+    assert 8 not in spec["concurrency"]
+    assert [c["name"] for c in cells_for_rep(cells, spec, 1)] == ["c1", "c2", "c4"]
+    assert [c["name"] for c in cells_for_rep(cells, spec, 2)] == ["c2", "c4", "c1"]
+    assert [c["name"] for c in cells_for_rep(cells, spec, 3)] == ["c4", "c1", "c2"]
+
+
 def test_e2_light_load_cells():
     spec = expand_spec(load_spec(Path("experiments/e2_static_vs_adaptive.yaml")), {"c_knee": 1, "r_knee": 1.84})
     cells = cells_from_spec(spec, spec["_derived"])

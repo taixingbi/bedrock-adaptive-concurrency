@@ -56,6 +56,9 @@ RQ1 (E1–E4) and RQ2/RQ3 (E5–E7) are done — do not rerun. Claims: `results/
 # cheap knee scout: C=1,2,4,8; 30s warmup + 60s measure; 1 rep
 python scripts/run_experiment.py experiments/e1_pilot.yaml --port 8080
 
+# P2 E1 replication (C=1,2,4 × 3; do not overwrite e1_pilot)
+python scripts/run_experiment.py experiments/e1_replication.yaml --slo-ms 576 --port 8080
+
 # read derived knobs
 cat results/e1_pilot/summary.json
 ```

@@ -178,3 +178,46 @@ def test_hierarchical_caps_pair_not_global_class():
         await limiter.release(1, tenant="B", prompt_class="short")
 
     asyncio.run(_run())
+
+
+def test_overflow_reject_unifies_global_and_cap_full():
+    async def _run():
+        queued = ConcurrencyLimiter(limit=1, queue_max=4)
+        await queued.acquire(1)
+        waiter = asyncio.create_task(queued.acquire(1, timeout_s=0.2))
+        await asyncio.sleep(0.05)
+        assert not waiter.done()
+        waiter.cancel()
+        try:
+            await waiter
+        except asyncio.CancelledError:
+            pass
+        await queued.release(1)
+
+        limiter = ConcurrencyLimiter(limit=1, queue_max=4, overflow_mode="reject")
+        first = await limiter.acquire(1)
+        assert first.ok
+        extra = await limiter.acquire(1)
+        assert not extra.ok
+        assert extra.reason == "global_full"
+        assert extra.waited_s == 0.0
+        assert limiter.waiting == 0
+        await limiter.release(1)
+
+        tenants = ConcurrencyLimiter(
+            limit=2,
+            queue_max=4,
+            tenant_caps={"A": 1, "B": 1},
+            use_tenant_cap=True,
+            overflow_mode="reject",
+        )
+        b = await tenants.acquire(1, tenant="B")
+        assert b.ok
+        extra_b = await tenants.acquire(1, tenant="B")
+        assert extra_b.reason == "tenant_full"
+        a = await tenants.acquire(1, tenant="A")
+        assert a.ok
+        await tenants.release(1, tenant="B")
+        await tenants.release(1, tenant="A")
+
+    asyncio.run(_run())

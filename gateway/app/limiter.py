@@ -30,6 +30,7 @@ class ConcurrencyLimiter:
         use_tenant_cap: bool = False,
         use_class_cap: bool = False,
         use_tenant_class_cap: bool = False,
+        overflow_mode: str = "queue",
     ) -> None:
         self._limit = max(int(limit), 1)
         self._queue_max = max(int(queue_max), 0)
@@ -45,6 +46,10 @@ class ConcurrencyLimiter:
         self._use_tenant_cap = bool(use_tenant_cap)
         self._use_class_cap = bool(use_class_cap)
         self._use_tenant_class_cap = bool(use_tenant_class_cap)
+        mode = str(overflow_mode or "queue").strip().lower()
+        if mode not in {"queue", "reject"}:
+            raise ValueError(f"unknown overflow_mode: {overflow_mode}")
+        self._overflow_mode = mode
         self._tenant_inflight: dict[str, int] = defaultdict(int)
         self._class_inflight: dict[str, int] = defaultdict(int)
         self._tenant_class_inflight: dict[tuple[str, str], int] = defaultdict(int)
@@ -118,6 +123,17 @@ class ConcurrencyLimiter:
             return True
         return self._tenant_class_inflight[(tenant, prompt_class)] < cap
 
+    @property
+    def overflow_mode(self) -> str:
+        return self._overflow_mode
+
+    def _admit(self, weight: float, tenant: str, prompt_class: str) -> None:
+        self._inflight += 1
+        self._tenant_inflight[tenant] += 1
+        self._class_inflight[prompt_class] += 1
+        self._tenant_class_inflight[(tenant, prompt_class)] += 1
+        self._w_t += float(weight)
+
     def _layer_ok(self, tenant: str, prompt_class: str) -> str | None:
         if not self._tenant_ok(tenant):
             return "tenant_full"
@@ -148,6 +164,11 @@ class ConcurrencyLimiter:
             blocked = self._layer_ok(tenant, prompt_class)
             if blocked:
                 return AcquireResult(ok=False, reason=blocked)
+            if self._overflow_mode == "reject":
+                if self._inflight >= self._limit:
+                    return AcquireResult(ok=False, reason="global_full")
+                self._admit(weight, tenant, prompt_class)
+                return AcquireResult(ok=True, reason="admitted", waited_s=loop.time() - t0)
             if self._inflight >= self._limit and self._waiting >= self._queue_max:
                 return AcquireResult(ok=False, reason="queue_full")
             self._waiting += 1
@@ -157,11 +178,7 @@ class ConcurrencyLimiter:
                     if blocked:
                         return AcquireResult(ok=False, reason=blocked, waited_s=loop.time() - t0)
                     if self._inflight < self._limit:
-                        self._inflight += 1
-                        self._tenant_inflight[tenant] += 1
-                        self._class_inflight[prompt_class] += 1
-                        self._tenant_class_inflight[(tenant, prompt_class)] += 1
-                        self._w_t += float(weight)
+                        self._admit(weight, tenant, prompt_class)
                         return AcquireResult(ok=True, reason="admitted", waited_s=loop.time() - t0)
                     if timeout_s is None:
                         await self._cond.wait()

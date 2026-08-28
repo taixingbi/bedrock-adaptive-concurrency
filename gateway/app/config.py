@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     c_max: int = 64
     queue_max: int = 16
     queue_timeout_s: float = 2.0
+    overflow_mode: str = "queue"
     controller_window_s: float = 5.0
     aimd_beta: float = 0.7
     min_samples: int = 5

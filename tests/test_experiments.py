@@ -92,3 +92,14 @@ def test_e7_joint_mix_per_tenant():
     assert streams[1][1].mix == {"short": 0.5, "long": 0.5}
     assert spec["phases"][1]["tenants"]["B"]["rps"] == 0.7 * 1.84
     assert spec["repetitions"] == 3
+
+
+def test_overflow_reject_specs_use_immediate_reject():
+    e5 = load_spec(Path("experiments/e5_overflow_reject.yaml"))
+    e6 = load_spec(Path("experiments/e6_overflow_reject.yaml"))
+    assert e5["overflow_mode"] == e6["overflow_mode"] == "reject"
+    assert e5["queue_max"] == e6["queue_max"] == 0
+    assert e5["repetitions"] == e6["repetitions"] == 3
+    spec = expand_spec(e5, {"c_knee": 1, "r_knee": 1.84})
+    cells = cells_from_spec(spec, spec["_derived"])
+    assert [c["name"] for c in cells] == ["global_token", "tenant_only", "class_only", "hierarchical"]

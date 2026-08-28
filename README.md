@@ -84,6 +84,11 @@ python scripts/run_experiment.py experiments/dryrun_joint.yaml --mock --reps 1 -
 python scripts/run_experiment.py experiments/e5_noisy_neighbor.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 python scripts/run_experiment.py experiments/e6_mixed_class.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
 python scripts/run_experiment.py experiments/e7_joint_interference.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+
+# P0 overflow-reject control (3 reps; unified immediate reject)
+python scripts/run_experiment.py experiments/e5_overflow_reject.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+python scripts/run_experiment.py experiments/e6_overflow_reject.yaml --c-knee 1 --r-knee 1.84 --slo-ms 576 --port 8080
+python scripts/run_experiment.py experiments/dryrun_overflow.yaml --mock --reps 1 --port 8080
 ```
 
 Optional PNGs: add `--plot`. Local harness check: `python scripts/run_experiment.py experiments/dryrun.yaml --mock --reps 1 --port 8080`.

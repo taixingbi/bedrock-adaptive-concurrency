@@ -4,7 +4,7 @@ Campaign index: RQ1 (E1–E4) and RQ2/RQ3 (E5–E7). Per-request JSONL is the so
 
 Design: [docs/experiment-design.md](../docs/experiment-design.md). Do not rerun E1–E4.
 
-Derived knobs (from `results/e1_pilot/` and `results/e1_long_scout/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms, **long TTFT SLO \(= 769\) ms**. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout`, not provider throttle.
+Derived knobs (from `results/e1_pilot/` and `results/e1_long_scout/`, do not re-guess): \(C^*=1\) (best observed point), \(R_{knee}\approx 1.84\) rps, interactive TTFT SLO \(= 576\) ms, **long TTFT SLO \(= 769\) ms**. Controller uses **backend** TTFT; user-facing TTFT is the goodput SLO. Gateway HTTP 429s in logs are `queue_timeout` / `*_full`, not provider throttle.
 
 E5–E7 all sit on the E4 controller \(C_g(t)=\mathrm{TokenAwareController}\). Isolation budgets are static. Primary metrics are per-tenant-class goodput, not aggregate.
 
@@ -25,8 +25,9 @@ E5–E7 all sit on the E4 controller \(C_g(t)=\mathrm{TokenAwareController}\). I
 | do not cite | `e5_noisy_neighbor/`, `e6_mixed_class/` | v1: A=short/B=long confound; static `tenant_admit`. |
 | E5 tenant isolation | `e5_tenant_isolation/` | Same-class noisy neighbor. 4×5. |
 | E6 class isolation | `e6_class_isolation/` | Same-tenant mixed class. 4×5. |
-| E7 joint | `e7_joint_interference/` | Tenant × class. 3×3. |
-| ignore | `dryrun/`, `dryrun_tenants/`, `dryrun_joint/`, `local/` | Mock / smoke. |
+| E7 joint | `e7_joint_interference/` | Tenant × class. 3×3. Optional `--reps 5`. |
+| P0 overflow-reject | `e5_overflow_reject/`, `e6_overflow_reject/` | Unified immediate reject. 3 reps. Ran. |
+| ignore | `dryrun/`, `dryrun_tenants/`, `dryrun_joint/`, `dryrun_overflow/`, `local/` | Mock / smoke. |
 
 ## E1 — knee (`e1_pilot/`, 1 rep, closed-loop)
 
@@ -167,14 +168,42 @@ A mixed + B mixed burst. Bedrock 429 = 0. Primary: P2 \(G_{A,\mathrm{short}}\).
 
 **Claim, weakly:** hierarchical is best on \(G_{A,\mathrm{short}}\) in all 3 reps vs tenant-only, and in 2/3 vs class-only. It does not zero \(G_B\). The complementary gap is **small** (~0.188 → 0.220). Do not sell E7 as the main result; E5 and E6 identify the two layers. Optional: more reps if a reviewer wants a significance test. The P2 log’s `decrease-token` + HTTP 429s are longs occupying \(W_t=4608\) at \(C_g=1\), then gateway sheds — expected.
 
+## P0 — overflow-reject control (`e5_overflow_reject/`, `e6_overflow_reject/`, 3 reps, 420 s)
+
+Same workloads and policies as the queued 5-rep E5/E6; `overflow_mode=reject`, `queue_max=0`. Every overflow is an immediate `*_full` (never `queue_timeout`). Bedrock 429 = 0. Admitted P95 is backend TTFT (~400–760 ms), not a wait tail.
+
+E5 P2 (arrival-time split):
+
+| Policy | \(G_A^{\mathrm{short}}\) | A SLO att. | A P95 | \(G_B\) | Rejects /rep |
+|---|---:|---:|---:|---:|---|
+| Global Token | 0.338 | 0.99 | 401 ms | 1.347 | `global_full` 156 |
+| Class-only | 0.442 | 0.95 | 513 ms | 1.206 | `class_full` 17 + `global_full` 130 |
+| **Tenant-only** | **0.453** | 0.92 | 761 ms | 1.206 | `tenant_full` 42 + `global_full` 105 |
+| Hierarchical | 0.427 | 0.97 | 449 ms | 1.204 | `tenant_full` 47 + `global_full` 109 |
+
+E6 P2:
+
+| Policy | \(G_{\mathrm{short}}\) | att. | P95 | Rejects /rep |
+|---|---:|---:|---:|---|
+| Global Token | 0.504 | 0.99 | 426 ms | `global_full` 163 |
+| Tenant-only | 0.518 | 0.98 | 463 ms | `global_full` 165 (`tenant_full` 0.7) |
+| **Class-only** | **0.545** | 0.99 | 439 ms | `class_full` 43 + `global_full` 114 |
+| Hierarchical | 0.450 | 0.91 | 785 ms | `tenant_class_full` 40 + `global_full` 128 |
+
+**Claim:** both pass criteria hold on the mean. E6 Class-only \(>\) Tenant-only in **3/3** reps (0.545 vs 0.518). E5 Tenant-only \(>\) Class-only on the mean (0.453 vs 0.442) but only **2/3** reps — the identified tenant-vs-class gap **collapses** once A cannot wait in a queue while B is rejected. The robust leftover: E5 Tenant-only \(>\) Global (0.45 vs 0.34); E6 Tenant-only \(\approx\) Global (0.518 vs 0.504), which is the artifact the control was meant to kill. Hierarchical is noisy at 3 reps (E6 rep2 P95 1.45 s). Do not retune budgets. Do not cite queued Global vs Class/Tenant as isolation.
+
+P1/P3 \(G_A\) / \(G_{\mathrm{short}}\) stay ~0.9 on E5. E6 P1 is a bit noisier (tenant 0.80 vs global 0.92).
+
+Optional later: E7 `--reps 5` (do not retune). E1 C=1,2,4 × 3 reps (write “best observed,” not universal knee, if skipped).
+
 ## Allowed paper claims
 
 1. Bedrock Llama 4 Maverick has a concurrency knee at \(C=1\) (E1).
 2. Best \(C\) moves with offered load; Fixed-1 collapses in the E3 burst.
 3. SLO-AIMD (+15.5% whole-run goodput vs Fixed) by raising \(C\) only under demand + healthy backend TTFT.
 4. Token demand changes the right \(C\) at constant RPS; token-aware recovers after long→short where request-count AIMD does not (E4, RQ1 ablation −token).
-5. Same-class noisy neighbor: only a tenant cap moves rejects onto B (E5 P2 \(G_A\) 0.49 vs global 0.30).
-6. Same-tenant mixed class: only a class cap restores short goodput (E6 P2 \(G_{\mathrm{short}}\) 0.44 vs tenant-only 0.25).
+5. Same-class noisy neighbor (queued 5-rep): tenant cap moves rejects onto B (E5 P2 \(G_A\) 0.49 vs global 0.30). Under unified reject the tenant-vs-class gap is tiny; Tenant-only still beats Global (0.45 vs 0.34).
+6. Same-tenant mixed class (queued 5-rep): class cap restores short (E6 P2 \(G_{\mathrm{short}}\) 0.44 vs tenant-only 0.25). Under unified reject Class-only \(>\) Tenant-only in 3/3 and Tenant-only \(\approx\) Global.
 7. Hierarchical is directionally best under joint interference, but the extra gap is small (E7).
 
 ## Traps
@@ -191,7 +220,8 @@ A mixed + B mixed burst. Bedrock 429 = 0. Primary: P2 \(G_{A,\mathrm{short}}\).
 - Do not write E5 “class-only ≈ global”: class-only still cannot prefer A, but immediate reject beats `queue_timeout`.
 - Do not write E6 “tenant-only ≈ global”: same reject-vs-queue artifact.
 - E7 complementary effect is small (3 reps). Do not hang the paper on it.
-- Watch \(G_B\): isolation is not “refuse all of B.” Tenant-only on E5 still gives P2 \(G_B\approx 0.68\).
+- Watch \(G_B\): isolation is not “refuse all of B.” Tenant-only on E5 still gives P2 \(G_B\approx 0.68\) (queued) / \(\approx 1.21\) (reject; almost all admits meet SLO).
+- P0: do not sell the queued E5 tenant-vs-class gap (0.492 vs 0.424) as causal identity — it shrinks to 0.453 vs 0.442 with unified reject. The E6 class-vs-tenant ordering survives.
 
 ## Recompute
 

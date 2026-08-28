@@ -130,6 +130,7 @@ def cell_env(spec: dict[str, Any], cell: dict[str, Any], run_id: str, args: argp
         "BEDROCK_TPD_QUOTA": str(merged.get("bedrock_tpd_quota", BEDROCK_TPD_QUOTA)),
         "QUEUE_MAX": str(merged.get("queue_max", spec.get("queue_max", 16))),
         "QUEUE_TIMEOUT_S": str(merged.get("queue_timeout_s", spec.get("queue_timeout_s", 2.0))),
+        "OVERFLOW_MODE": str(merged.get("overflow_mode", spec.get("overflow_mode", "queue"))),
         "MODEL_ID": str(merged.get("model_id", "us.meta.llama4-maverick-17b-instruct-v1:0")),
         "AWS_REGION": str(merged.get("aws_region", "us-east-1")),
         "ADMIT_CAPS": ",".join(str(x) for x in (merged.get("caps") or spec.get("admit_caps") or ["global"])),

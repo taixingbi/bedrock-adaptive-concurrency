@@ -1,0 +1,38 @@
+name: dryrun_overflow
+experiment: E5_noisy
+mode: open_loop
+warmup_s: 0
+measure_s: 2
+repetitions: 1
+interleave: true
+replay_traces: true
+overflow_mode: reject
+queue_max: 0
+queue_timeout_s: 0
+c_global: 2
+tenants:
+  A:
+    c_max: 2
+    classes: {short: 2}
+  B:
+    c_max: 1
+    classes: {short: 1}
+class_caps:
+  short: 2
+  long: 1
+slo:
+  short: 576
+  long: 769
+policies:
+  - {name: global_token, policy: token_slo_aimd, c: 2, caps: [global]}
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+phases:
+  - until_s: 1
+    tenants:
+      A: {rps: 2, prompt_class: short}
+      B: {rps: 0}
+  - until_s: 2
+    tenants:
+      A: {rps: 2, prompt_class: short}
+      B: {rps: 2, prompt_class: short}

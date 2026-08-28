@@ -194,6 +194,8 @@ Do **not** cite `results/e5_noisy_neighbor/` or `results/e6_mixed_class/` from t
 
 Each E5–E7 experiment changes **one** interference dimension. Policies on a rep share a seeded arrival trace. Policy order is interleaved across reps (latin-style `policy_schedules` in the YAML) so opaque Bedrock drift is not aliased to one cell.
 
+The 5-rep E5/E6 campaign used a wait queue (`queue_max=16`, `queue_timeout=2s`). Cap-full policies reject immediately (`tenant_full` / `class_full`), so part of Global vs cap-only is a **queue-vs-reject artifact**. P0 control ran (`e5_overflow_reject/`, `e6_overflow_reject/`): same workloads, `overflow_mode=reject`. Both mean orderings hold; E6 Class-only \(>\) Tenant-only is 3/3, E5 Tenant-only \(>\) Class-only is 2/3 and the gap collapses. E1–E4 keep the queue. Do not retune isolation budgets.
+
 ### E5 — Tenant noisy-neighbor isolation
 
 Both tenants are **short**. Class-only cannot see A vs B.
@@ -241,7 +243,7 @@ Two tenants, each mixed. This is where tenant \(\times\) class happen together.
 | P2 120–300s | \(0.5 R_{\mathrm{ref}}\), 80% short / 20% long | \(0.7 R_{\mathrm{ref}}\), 50/50 |
 | P3 300–420s | \(0.5 R_{\mathrm{ref}}\), 100% short | 0 |
 
-Policies: Tenant-only Token, Class-only Token, Hierarchical Token. Start with 3 reps; extend to 5 if the gap is clean.
+Policies: Tenant-only Token, Class-only Token, Hierarchical Token. 3 reps; optional `--reps 5` on the same YAML. Do not retune the mix to enlarge the hierarchical gap.
 
 **Expected:** \(G_A^{\mathrm{short}}\) satisfies Hierarchical \(>\) Tenant-only and Hierarchical \(>\) Class-only. Watch \(G_B\) so the win is not “protect A by refusing all of B.” That is: **tenant and class controls are complementary**.
 
@@ -254,6 +256,7 @@ Policies: Tenant-only Token, Class-only Token, Hierarchical Token. Start with 3 
 | Quota-pressure E5 | Out. `results/e5_quota_pressure/` do not cite. |
 | Controller ablation (`results/e6_ablation/`) | RQ1 appendix. Token / TTFT ablations. **Not** paper E7. Optional later (−demand-gate, 5 reps). |
 | First nested E5/E6 (`e5_noisy_neighbor/`, `e6_mixed_class/`) | Do not cite. A=short/B=long confound; isolation used static `tenant_admit`. |
+| E5/E6 overflow control (`e5_overflow_reject/`, `e6_overflow_reject/`) | P0. Same workloads, immediate reject. 3 reps. **Ran.** |
 
 ## Metrics
 

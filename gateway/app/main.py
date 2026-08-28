@@ -49,6 +49,7 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
         use_tenant_cap=settings.use_tenant_cap,
         use_class_cap=settings.use_class_cap,
         use_tenant_class_cap=settings.use_tenant_class_cap,
+        overflow_mode=settings.overflow_mode,
     )
     controller = build_controller(settings)
     window = ObservationWindow()
@@ -91,6 +92,7 @@ def create_app(settings: Settings | None = None, bedrock_client: Any = None) -> 
             "w_t": limiter.w_t,
             "ttft_slo_ms": settings.ttft_slo_ms,
             "admit_caps": settings.admit_caps,
+            "overflow_mode": limiter.overflow_mode,
             "tenant_inflight": limiter.tenant_inflight,
             "class_inflight": limiter.class_inflight,
             "tenant_class_inflight": limiter.tenant_class_inflight,

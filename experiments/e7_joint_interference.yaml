@@ -4,6 +4,7 @@ mode: open_loop
 warmup_s: 0
 measure_s: 420
 repetitions: 3
+# P1 optional: --reps 5 on the same YAML (do not retune the workload).
 interleave: true
 replay_traces: true
 queue_max: 16

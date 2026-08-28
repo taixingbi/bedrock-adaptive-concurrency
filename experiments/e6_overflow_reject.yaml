@@ -1,0 +1,42 @@
+name: e6_overflow_reject
+experiment: E6_mixed
+mode: open_loop
+warmup_s: 0
+measure_s: 420
+repetitions: 3
+interleave: true
+replay_traces: true
+# Unified overflow: no wait queue. Every policy immediate-rejects when its cap is full.
+overflow_mode: reject
+queue_max: 0
+queue_timeout_s: 0
+c_global: 2
+tenant:
+  id: A
+  c_max: 2
+  classes: {short: 2, long: 1}
+class_caps:
+  short: 2
+  long: 1
+slo:
+  short: 576
+  long: 769
+policies:
+  - {name: global_token, policy: token_slo_aimd, c: 2, caps: [global]}
+  - {name: tenant_only, policy: token_slo_aimd, c: 2, caps: [global, tenant]}
+  - {name: class_only, policy: token_slo_aimd, c: 2, caps: [global, class]}
+  - {name: hierarchical, policy: token_slo_aimd, c: 2, caps: [global, tenant, class]}
+policy_schedules:
+  - [global_token, tenant_only, class_only, hierarchical]
+  - [class_only, hierarchical, global_token, tenant_only]
+  - [tenant_only, global_token, hierarchical, class_only]
+phases:
+  - until_s: 120
+    rps_frac: 0.5
+    mix: {short: 1.0, long: 0.0}
+  - until_s: 300
+    rps_frac: 0.9
+    mix: {short: 0.7, long: 0.3}
+  - until_s: 420
+    rps_frac: 0.5
+    mix: {short: 1.0, long: 0.0}
